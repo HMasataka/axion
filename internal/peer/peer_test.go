@@ -446,11 +446,12 @@ func TestPeerSend_ChannelFull(t *testing.T) {
 	}
 	defer listener.Close()
 
+	// Accept but don't read - this will cause the channel to fill
 	go func() {
 		conn, _ := listener.Accept()
 		if conn != nil {
 			defer conn.Close()
-			time.Sleep(2 * time.Second)
+			time.Sleep(3 * time.Second)
 		}
 	}()
 
@@ -466,14 +467,26 @@ func TestPeerSend_ChannelFull(t *testing.T) {
 		Payload: []byte(`{"test": "data"}`),
 	}
 
+	// Fill up the outgoing channel
+	successCount := 0
+	errorCount := 0
 	for i := 0; i < 150; i++ {
-		_ = p.Send(msg)
+		if err := p.Send(msg); err != nil {
+			errorCount++
+		} else {
+			successCount++
+		}
 	}
 
-	err = p.Send(msg)
-	if err == nil {
-		t.Log("channel may have capacity, no error expected in some cases")
+	// When channel is full, Send should return an error
+	// At minimum, SOME sends should succeed (up to channel capacity)
+	if successCount == 0 {
+		t.Error("expected some sends to succeed before channel full")
 	}
+
+	// When channel is full, we should see errors
+	// The exact number depends on channel capacity
+	t.Logf("sends: %d success, %d errors", successCount, errorCount)
 }
 
 func TestPeerIncoming(t *testing.T) {

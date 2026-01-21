@@ -267,10 +267,17 @@ func TestError_ConnectionDrop(t *testing.T) {
 		t.Fatalf("failed to connect: %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait for peer connection with polling
+	var initialPeers int
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		initialPeers = len(server.GetPeers())
+		if initialPeers == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
-	// Verify client connected
-	initialPeers := len(server.GetPeers())
 	if initialPeers != 1 {
 		t.Errorf("expected 1 peer after connect, got %d", initialPeers)
 	}
@@ -278,12 +285,19 @@ func TestError_ConnectionDrop(t *testing.T) {
 	// Abruptly close the client
 	client.Close()
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for server to detect disconnection with polling
+	deadline = time.Now().Add(2 * time.Second)
+	var finalPeers int
+	for time.Now().Before(deadline) {
+		finalPeers = len(server.GetPeers())
+		if finalPeers == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	// Server should handle the dropped connection gracefully
 	// (no panic, server still running)
-	finalPeers := len(server.GetPeers())
-
 	// After client close, peer count should be 0 or unchanged depending on cleanup timing
 	if finalPeers > initialPeers {
 		t.Errorf("peer count should not increase after close: initial=%d, final=%d", initialPeers, finalPeers)
@@ -305,17 +319,35 @@ func TestError_ServerStopDuringConnection(t *testing.T) {
 	}
 	defer client.Close()
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait for connection with polling
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if !client.IsConnected() {
+		t.Fatal("client should be connected before server stop")
+	}
 
 	// Stop server while client is connected
 	server.Stop()
 
-	// Give time for connection to close
-	time.Sleep(100 * time.Millisecond)
+	// Wait for client to detect disconnection with polling
+	deadline = time.Now().Add(2 * time.Second)
+	disconnected := false
+	for time.Now().Before(deadline) {
+		if !client.IsConnected() {
+			disconnected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	// Client should detect disconnection
-	// This may or may not show as disconnected depending on timing
-	_ = client.IsConnected()
+	// Client may or may not detect disconnection immediately depending on implementation
+	_ = disconnected
 }
 
 // TestError_DoubleClose tests that double close doesn't panic
@@ -348,10 +380,16 @@ func TestError_DoubleStart(t *testing.T) {
 		t.Fatalf("first start failed: %v", err)
 	}
 
-	// Second start - implementation may handle this differently
+	// Second start - should either succeed (idempotent) or return error
+	// Either way, it should NOT panic
 	err = w.Start()
-	// Just ensure no panic
-	_ = err
+	// Log the result for debugging
+	if err != nil {
+		t.Logf("second start returned error (expected): %v", err)
+	} else {
+		t.Log("second start succeeded (idempotent behavior)")
+	}
+	// Test passes if no panic occurred
 }
 
 // TestError_EmptyPayload tests handling of empty payloads
@@ -416,15 +454,14 @@ func TestError_WriteToReadOnlyDir(t *testing.T) {
 	testFile := filepath.Join(readOnlyDir, "test.txt")
 	err := os.WriteFile(testFile, []byte("content"), 0644)
 	if err == nil {
-		// This might happen when running as root
-		t.Log("write to read-only dir succeeded (running as root or special permissions)")
-		// Clean up the file that was created
+		// Running as root or special permissions - skip this test
 		os.Remove(testFile)
-	} else {
-		// Expected behavior: should fail with permission error
-		if !os.IsPermission(err) {
-			t.Errorf("expected permission error, got: %v", err)
-		}
+		t.Skip("skipping test: running as root or with elevated permissions")
+	}
+
+	// Expected behavior: should fail with permission error
+	if !os.IsPermission(err) {
+		t.Errorf("expected permission error, got: %v", err)
 	}
 }
 
@@ -482,17 +519,20 @@ func TestError_ConnectionTimeout(t *testing.T) {
 	err := client.Connect()
 	elapsed := time.Since(startTime)
 
+	// Connection to non-routable address MUST fail with an error
 	if err == nil {
 		client.Close()
-		t.Error("expected error when connecting to non-routable address")
-	} else {
-		// Verify we got an error (timeout or connection refused)
-		t.Logf("Connection failed as expected after %v: %v", elapsed, err)
+		t.Fatal("expected error when connecting to non-routable address, got nil")
 	}
 
-	// Verify the error is not nil
-	if err == nil {
-		t.Error("expected non-nil error for connection timeout")
+	// Verify we got an error within reasonable time
+	if elapsed > 30*time.Second {
+		t.Errorf("connection attempt took too long: %v (expected timeout within 30s)", elapsed)
+	}
+
+	// Client should not be connected after failed connection
+	if client.IsConnected() {
+		t.Error("client should not be connected after connection failure")
 	}
 }
 
@@ -506,10 +546,10 @@ func TestError_NetworkInterruption(t *testing.T) {
 	addr := server.GetListenAddr()
 
 	// Track messages received
-	messageCount := 0
+	messageReceived := make(chan struct{}, 1)
 	server.SetPeerHandler(func(p *peer.Peer) {
 		p.SetMessageHandler(func(msg *protocol.Message) {
-			messageCount++
+			messageReceived <- struct{}{}
 		})
 	})
 
@@ -518,16 +558,32 @@ func TestError_NetworkInterruption(t *testing.T) {
 		t.Fatalf("failed to connect: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for connection with polling
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
-	// Verify initial connection
 	if !client.IsConnected() {
 		t.Fatal("client should be connected")
 	}
 
-	initialPeers := len(server.GetPeers())
+	// Wait for peer registration with polling
+	var initialPeers int
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		initialPeers = len(server.GetPeers())
+		if initialPeers == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	if initialPeers != 1 {
-		t.Errorf("expected 1 peer, got %d", initialPeers)
+		t.Fatalf("expected 1 peer, got %d", initialPeers)
 	}
 
 	// Send a message before interruption
@@ -536,23 +592,54 @@ func TestError_NetworkInterruption(t *testing.T) {
 		Payload: []byte(`{"relative_path":"test.txt"}`),
 	}
 	if err := client.Send(msg); err != nil {
-		t.Errorf("failed to send message: %v", err)
+		t.Fatalf("failed to send message: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for message to be received
+	select {
+	case <-messageReceived:
+		// Message received successfully
+	case <-time.After(2 * time.Second):
+		t.Fatal("message was not received before server stop")
+	}
 
 	// Simulate network interruption by stopping the server
 	server.Stop()
 
-	time.Sleep(200 * time.Millisecond)
+	// Wait for client to detect disconnection with timeout
+	disconnected := false
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !client.IsConnected() {
+			disconnected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	// Try to send after server is stopped - should fail
-	err := client.Send(msg)
-	// The send might succeed (buffered) or fail depending on timing
-	// Just ensure no panic
-	_ = err
+	// Client MUST detect disconnection after server stop
+	if !disconnected {
+		t.Error("client should detect disconnection after server stop")
+	}
 
+	// After server stop and disconnection detected, send MUST fail
+	sendErr := client.Send(msg)
+	if sendErr == nil {
+		// If first send succeeded (buffered), wait and retry
+		time.Sleep(200 * time.Millisecond)
+		sendErr = client.Send(msg)
+		if sendErr == nil {
+			t.Error("send should fail after server stop and disconnection")
+		}
+	}
+
+	// Verify client can still be closed without panic
 	client.Close()
+
+	// After close, client MUST report disconnected
+	if client.IsConnected() {
+		t.Error("client should report disconnected after Close()")
+	}
 }
 
 // TestError_FilePermissionDenied tests handling of permission denied errors
@@ -569,12 +656,13 @@ func TestError_FilePermissionDenied(t *testing.T) {
 	// Try to read the file
 	_, err := os.ReadFile(testFile)
 	if err == nil {
-		t.Log("read succeeded on no-permission file (may happen as root)")
-	} else {
-		// Verify it's a permission error
-		if !os.IsPermission(err) {
-			t.Logf("expected permission error, got: %v", err)
-		}
+		// Running as root or special permissions - skip this test
+		t.Skip("skipping test: running as root or with elevated permissions")
+	}
+
+	// Verify it's a permission error
+	if !os.IsPermission(err) {
+		t.Errorf("expected permission error, got: %v", err)
 	}
 }
 

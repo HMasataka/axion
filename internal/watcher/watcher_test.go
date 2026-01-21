@@ -142,15 +142,26 @@ func TestWatcherEvents_Remove(t *testing.T) {
 		os.Remove(testFile)
 	}()
 
-	select {
-	case event := <-w.Events():
-		if event.Op != OpRemove {
-			t.Errorf("expected Remove event, got %v", event.Op)
+	// Wait for at least one relevant event (may receive multiple events)
+	timeout := time.After(2 * time.Second)
+	foundEvent := false
+
+	for !foundEvent {
+		select {
+		case event := <-w.Events():
+			// Accept Remove or Rename (some OS report rename for deletion)
+			if event.RelativePath == "toremove.txt" && (event.Op == OpRemove || event.Op == OpRename) {
+				foundEvent = true
+			}
+		case err := <-w.Errors():
+			t.Fatalf("watcher error: %v", err)
+		case <-timeout:
+			t.Fatal("timeout waiting for remove event")
 		}
-	case err := <-w.Errors():
-		t.Fatalf("watcher error: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for remove event")
+	}
+
+	if !foundEvent {
+		t.Error("expected to find remove/rename event for toremove.txt")
 	}
 }
 
@@ -174,18 +185,28 @@ func TestWatcherEvents_DirCreate(t *testing.T) {
 		os.Mkdir(newDir, 0755)
 	}()
 
-	select {
-	case event := <-w.Events():
-		if event.Op != OpCreate {
-			t.Errorf("expected Create event, got %v", event.Op)
+	// Wait for at least one relevant event (may receive multiple events)
+	timeout := time.After(2 * time.Second)
+	foundEvent := false
+
+	for !foundEvent {
+		select {
+		case event := <-w.Events():
+			if event.RelativePath == "newdir" && event.Op == OpCreate {
+				if !event.IsDir {
+					t.Error("expected IsDir to be true for directory creation")
+				}
+				foundEvent = true
+			}
+		case err := <-w.Errors():
+			t.Fatalf("watcher error: %v", err)
+		case <-timeout:
+			t.Fatal("timeout waiting for dir create event")
 		}
-		if !event.IsDir {
-			t.Error("expected IsDir to be true")
-		}
-	case err := <-w.Errors():
-		t.Fatalf("watcher error: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for dir create event")
+	}
+
+	if !foundEvent {
+		t.Error("expected to find create event for newdir")
 	}
 }
 
@@ -348,16 +369,26 @@ func TestWatcherRecursive(t *testing.T) {
 		os.WriteFile(deepFile, []byte("nested content"), 0644)
 	}()
 
-	select {
-	case event := <-w.Events():
-		expectedPath := "subdir/deep/nested.txt"
-		if event.RelativePath != expectedPath {
-			t.Errorf("expected relative path %s, got %s", expectedPath, event.RelativePath)
+	// Wait for at least one relevant event (may receive multiple events)
+	timeout := time.After(2 * time.Second)
+	foundEvent := false
+	expectedPath := "subdir/deep/nested.txt"
+
+	for !foundEvent {
+		select {
+		case event := <-w.Events():
+			if event.RelativePath == expectedPath && (event.Op == OpCreate || event.Op == OpWrite) {
+				foundEvent = true
+			}
+		case err := <-w.Errors():
+			t.Fatalf("watcher error: %v", err)
+		case <-timeout:
+			t.Fatal("timeout waiting for nested file event")
 		}
-	case err := <-w.Errors():
-		t.Fatalf("watcher error: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for nested file event")
+	}
+
+	if !foundEvent {
+		t.Errorf("expected to find create/write event for %s", expectedPath)
 	}
 }
 

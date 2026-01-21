@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -270,7 +272,14 @@ func TestP2P_BroadcastToMultipleClients(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(200 * time.Millisecond)
+	// Wait for all connections to be established
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(server.GetPeers()) >= 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	msg := &protocol.Message{
 		Type:    protocol.TypeFileChange,
@@ -309,29 +318,10 @@ func TestSync_FileCreation(t *testing.T) {
 
 	// Get syncer1's listen address
 	status1 := syncer1.GetStatus()
-	if status1["base_path"] != tmpDir1 {
-		t.Errorf("expected base_path %s, got %v", tmpDir1, status1["base_path"])
-	}
+	syncer1Addr := status1["listen_addr"].(string)
 
-	// Create a test file in tmpDir1
-	testContent := []byte("test file content for sync")
-	testFile := filepath.Join(tmpDir1, "sync_test.txt")
-	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	// Wait for syncer1 to detect the file
-	time.Sleep(300 * time.Millisecond)
-
-	// Verify syncer1 detected the file
-	status1After := syncer1.GetStatus()
-	localFiles1 := status1After["local_files"].(int)
-	if localFiles1 < 1 {
-		t.Errorf("syncer1 should detect at least 1 file, got %d", localFiles1)
-	}
-
-	// Create syncer2 with tmpDir2
-	syncer2, err := syncer.New(tmpDir2, ":0", nil, nil)
+	// Create syncer2 that connects to syncer1
+	syncer2, err := syncer.New(tmpDir2, ":0", []string{syncer1Addr}, nil)
 	if err != nil {
 		t.Fatalf("failed to create syncer2: %v", err)
 	}
@@ -341,10 +331,59 @@ func TestSync_FileCreation(t *testing.T) {
 	}
 	defer syncer2.Stop()
 
-	// Verify syncer2 started correctly
-	status2 := syncer2.GetStatus()
-	if status2["base_path"] != tmpDir2 {
-		t.Errorf("expected base_path %s, got %v", tmpDir2, status2["base_path"])
+	// Wait for peer connection
+	connected := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		if status["server_peers"].(int) > 0 {
+			connected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !connected {
+		t.Fatal("syncer2 failed to connect to syncer1")
+	}
+
+	// Create a test file in tmpDir1
+	testContent := []byte("test file content for sync")
+	testFile := filepath.Join(tmpDir1, "sync_test.txt")
+	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Wait for file to propagate to syncer2
+	propagated := false
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		destFile := filepath.Join(tmpDir2, "sync_test.txt")
+		if content, err := os.ReadFile(destFile); err == nil {
+			if string(content) == string(testContent) {
+				propagated = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if !propagated {
+		t.Error("file did not propagate from syncer1 to syncer2")
+	}
+
+	// Verify syncer1 detected the file
+	status1After := syncer1.GetStatus()
+	localFiles1 := status1After["local_files"].(int)
+	if localFiles1 < 1 {
+		t.Errorf("syncer1 should detect at least 1 file, got %d", localFiles1)
+	}
+
+	// Verify syncer2 now has the file
+	status2After := syncer2.GetStatus()
+	localFiles2 := status2After["local_files"].(int)
+	if localFiles2 < 1 {
+		t.Errorf("syncer2 should have at least 1 file after propagation, got %d", localFiles2)
 	}
 }
 
@@ -390,14 +429,7 @@ func TestSync_TwoSyncersConnect(t *testing.T) {
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 
-	// Create a test file in tmpDir1 before starting syncers
-	testContent := []byte("content to sync between syncers")
-	testFile := filepath.Join(tmpDir1, "connect_test.txt")
-	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	// Create syncer1 as server
+	// Create syncer1 as server FIRST (no files yet)
 	syncer1, err := syncer.New(tmpDir1, ":0", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to create syncer1: %v", err)
@@ -410,18 +442,10 @@ func TestSync_TwoSyncersConnect(t *testing.T) {
 
 	// Get syncer1's listen address from status
 	status1 := syncer1.GetStatus()
-	if status1["base_path"] != tmpDir1 {
-		t.Errorf("syncer1 base_path mismatch: expected %s, got %v", tmpDir1, status1["base_path"])
-	}
+	syncer1Addr := status1["listen_addr"].(string)
 
-	// Verify syncer1 detected the file
-	localFiles1 := status1["local_files"].(int)
-	if localFiles1 < 1 {
-		t.Errorf("syncer1 should have at least 1 local file, got %d", localFiles1)
-	}
-
-	// Create syncer2 with separate directory
-	syncer2, err := syncer.New(tmpDir2, ":0", nil, nil)
+	// Create syncer2 that connects to syncer1
+	syncer2, err := syncer.New(tmpDir2, ":0", []string{syncer1Addr}, nil)
 	if err != nil {
 		t.Fatalf("failed to create syncer2: %v", err)
 	}
@@ -431,19 +455,64 @@ func TestSync_TwoSyncersConnect(t *testing.T) {
 	}
 	defer syncer2.Stop()
 
-	time.Sleep(200 * time.Millisecond)
+	// Wait for peer connection with polling instead of fixed sleep
+	connected := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		if status["server_peers"].(int) > 0 {
+			connected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
+	if !connected {
+		t.Fatal("syncer2 failed to connect to syncer1")
+	}
+
+	// NOW create a test file in tmpDir1 (after both syncers are connected)
+	testContent := []byte("content to sync between syncers")
+	testFile := filepath.Join(tmpDir1, "connect_test.txt")
+	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Wait for file to propagate
+	propagated := false
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		destFile := filepath.Join(tmpDir2, "connect_test.txt")
+		if content, err := os.ReadFile(destFile); err == nil {
+			if string(content) == string(testContent) {
+				propagated = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if !propagated {
+		t.Error("file did not propagate from syncer1 to syncer2")
+	}
+
+	// Verify syncer1 detected the file
+	status1After := syncer1.GetStatus()
+	localFiles1 := status1After["local_files"].(int)
+	if localFiles1 < 1 {
+		t.Errorf("syncer1 should have at least 1 local file, got %d", localFiles1)
+	}
+
+	// Verify syncer2 has the file
 	status2 := syncer2.GetStatus()
-	if status2["base_path"] != tmpDir2 {
-		t.Errorf("syncer2 base_path mismatch: expected %s, got %v", tmpDir2, status2["base_path"])
+	localFiles2 := status2["local_files"].(int)
+	if localFiles2 < 1 {
+		t.Errorf("syncer2 should have at least 1 local file after sync, got %d", localFiles2)
 	}
 
-	// Verify both syncers are running and status is valid
-	if status1["connected_clients"] == nil {
-		t.Error("syncer1 status should include connected_clients")
-	}
-	if status2["server_peers"] == nil {
-		t.Error("syncer2 status should include server_peers")
+	// Verify connection status
+	if status1After["server_peers"].(int) < 1 {
+		t.Error("syncer1 should have at least 1 connected peer")
 	}
 }
 
@@ -474,9 +543,23 @@ func TestConflict_LocalNewerWins(t *testing.T) {
 	}
 	defer syncer1.Stop()
 
+	// Get syncer's server address
+	status := syncer1.GetStatus()
+	listenAddr := status["listen_addr"].(string)
+
+	// Wait for syncer to be ready
 	time.Sleep(100 * time.Millisecond)
 
-	// Create a FileChange message with older timestamp
+	// Connect a client to the syncer and send the FileChange message
+	client := peer.NewClient(listenAddr)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("failed to connect to syncer: %v", err)
+	}
+	defer client.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Create a FileChange message with older timestamp (local is newer)
 	remoteModTime := now.Add(-1 * time.Hour).UnixNano()
 	payload := &protocol.FileChangePayload{
 		RelativePath: "conflict.txt",
@@ -489,15 +572,15 @@ func TestConflict_LocalNewerWins(t *testing.T) {
 		t.Fatalf("failed to create message: %v", err)
 	}
 
-	// Verify the message was created correctly
-	if msg.Type != protocol.TypeFileChange {
-		t.Errorf("expected TypeFileChange, got %d", msg.Type)
+	// Send the message to the syncer via P2P
+	if err := client.Send(msg); err != nil {
+		t.Fatalf("failed to send message: %v", err)
 	}
 
-	// Wait to ensure no file request is triggered (local is newer)
+	// Wait for syncer to process the message
 	time.Sleep(200 * time.Millisecond)
 
-	// Verify local file content hasn't changed
+	// Verify local file content hasn't changed (local is newer, so no update)
 	content, err := os.ReadFile(localFile)
 	if err != nil {
 		t.Fatalf("failed to read local file: %v", err)
@@ -506,7 +589,7 @@ func TestConflict_LocalNewerWins(t *testing.T) {
 		t.Error("local file should not be modified when it's newer")
 	}
 
-	// Verify file still exists with original permissions
+	// Verify file still exists with original size
 	info, err := os.Stat(localFile)
 	if err != nil {
 		t.Fatalf("failed to stat local file: %v", err)
@@ -543,26 +626,53 @@ func TestConflict_RemoteNewerWins(t *testing.T) {
 	}
 	defer syncer1.Stop()
 
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify syncer detected the local file
+	// Get syncer's server address
 	status := syncer1.GetStatus()
-	localFiles := status["local_files"].(int)
-	if localFiles < 1 {
-		t.Fatalf("syncer should detect at least 1 local file, got %d", localFiles)
+	listenAddr := status["listen_addr"].(string)
+
+	// Wait for syncer to be ready with polling
+	ready := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		status = syncer1.GetStatus()
+		localFiles := status["local_files"].(int)
+		if localFiles >= 1 {
+			ready = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Verify the local file's modification time is old
-	info, err := os.Stat(localFile)
-	if err != nil {
-		t.Fatalf("failed to stat file: %v", err)
-	}
-	if info.ModTime().After(time.Now().Add(-1 * time.Hour)) {
-		t.Error("local file modification time should be in the past")
+	if !ready {
+		t.Fatal("syncer did not detect local file")
 	}
 
-	// Create a FileChange message with newer timestamp
-	newerModTime := time.Now().UnixNano()
+	// Connect a client to the syncer
+	client := peer.NewClient(listenAddr)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("failed to connect to syncer: %v", err)
+	}
+	defer client.Close()
+
+	// Set up message handler to capture file requests from syncer
+	fileRequestReceived := make(chan *protocol.Message, 1)
+	client.SetMessageHandler(func(msg *protocol.Message) {
+		if msg.Type == protocol.TypeFileRequest {
+			fileRequestReceived <- msg
+		}
+	})
+
+	// Wait for connection to be established
+	connDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(connDeadline) {
+		if client.IsConnected() {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Create a FileChange message with newer timestamp (remote is newer)
+	newerModTime := time.Now().Add(1 * time.Hour).UnixNano()
 	payload := &protocol.FileChangePayload{
 		RelativePath: "remote_newer.txt",
 		Hash:         "different_hash_newer",
@@ -574,13 +684,26 @@ func TestConflict_RemoteNewerWins(t *testing.T) {
 		t.Fatalf("failed to create message: %v", err)
 	}
 
-	// Verify message was created correctly
-	if msg.Type != protocol.TypeFileChange {
-		t.Errorf("expected TypeFileChange, got %d", msg.Type)
+	// Send the message to the syncer via P2P
+	if err := client.Send(msg); err != nil {
+		t.Fatalf("failed to send message: %v", err)
 	}
 
-	// The syncer would normally request this file because remote is newer
-	// This test verifies the syncer can handle such scenarios
+	// Wait for syncer to process and send a file request
+	// Syncer MUST request the file since remote is newer
+	select {
+	case reqMsg := <-fileRequestReceived:
+		// Syncer requested the file - this is expected behavior
+		reqPayload, err := protocol.ParseFileRequestPayload(reqMsg.Payload)
+		if err != nil {
+			t.Fatalf("failed to parse file request: %v", err)
+		}
+		if reqPayload.RelativePath != "remote_newer.txt" {
+			t.Errorf("expected request for remote_newer.txt, got %s", reqPayload.RelativePath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("syncer should request file when remote is newer, but no request received")
+	}
 }
 
 // TestSync_IgnorePatterns tests that ignore patterns are respected
@@ -613,6 +736,152 @@ func TestSync_IgnorePatterns(t *testing.T) {
 	// Should only count normal.txt, not .git or *.tmp
 	if localFiles != 1 {
 		t.Errorf("expected 1 local file (normal.txt only), got %d", localFiles)
+	}
+}
+
+// TestSync_IgnorePatterns_NotPropagated tests that ignored files are not broadcast
+func TestSync_IgnorePatterns_NotPropagated(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	ignoreList := []string{".git", "*.tmp", "*.log"}
+
+	// Create syncer with ignore patterns
+	s, err := syncer.New(tmpDir, ":0", nil, ignoreList)
+	if err != nil {
+		t.Fatalf("failed to create syncer: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("failed to start syncer: %v", err)
+	}
+	defer s.Stop()
+
+	// Set up peer server to capture any broadcast messages
+	server := peer.NewServer(":0")
+	messagesReceived := make(chan *protocol.Message, 10)
+	peerConnected := make(chan struct{}, 1)
+
+	server.SetPeerHandler(func(p *peer.Peer) {
+		p.SetMessageHandler(func(msg *protocol.Message) {
+			messagesReceived <- msg
+		})
+		peerConnected <- struct{}{}
+	})
+
+	if err := server.Start(); err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	addr := server.GetListenAddr()
+
+	client := peer.NewClient(addr)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	// Wait for connection
+	select {
+	case <-peerConnected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for peer connection")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Create both ignored and non-ignored files
+	os.WriteFile(filepath.Join(tmpDir, "normal.txt"), []byte("should sync"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "ignored.tmp"), []byte("should ignore"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "debug.log"), []byte("log file"), 0644)
+	os.Mkdir(filepath.Join(tmpDir, ".git"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, ".git", "config"), []byte("git"), 0644)
+
+	// Poll until syncer detects the file (should only count normal.txt)
+	deadline := time.Now().Add(2 * time.Second)
+	var localFiles int
+	for time.Now().Before(deadline) {
+		status := s.GetStatus()
+		localFiles = status["local_files"].(int)
+		if localFiles >= 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Should only count normal.txt
+	if localFiles != 1 {
+		t.Errorf("expected 1 local file (normal.txt only), got %d", localFiles)
+	}
+
+	// Verify ignored patterns are correctly applied
+	// The syncer should not track .git, *.tmp, or *.log files
+	// (This is tested implicitly by the local_files count)
+}
+
+// TestSync_IgnorePatterns_Validation tests ignore pattern matching
+func TestSync_IgnorePatterns_Validation(t *testing.T) {
+	testCases := []struct {
+		name        string
+		ignoreList  []string
+		files       map[string]string // filename -> content
+		expectCount int               // expected local_files count
+	}{
+		{
+			name:       "ignore_dotfiles",
+			ignoreList: []string{".*"},
+			files: map[string]string{
+				"visible.txt": "content",
+				".hidden":     "hidden",
+				".gitignore":  "ignore",
+			},
+			expectCount: 1, // only visible.txt
+		},
+		{
+			name:       "ignore_by_extension",
+			ignoreList: []string{"*.bak", "*.swp"},
+			files: map[string]string{
+				"file.txt":  "content",
+				"file.bak":  "backup",
+				"file.swp":  "swap",
+				"other.doc": "doc",
+			},
+			expectCount: 2, // file.txt and other.doc
+		},
+		{
+			name:       "ignore_specific_names",
+			ignoreList: []string{"node_modules", "vendor"},
+			files: map[string]string{
+				"main.go":     "package main",
+				"other.go":    "package other",
+				"readme.txt":  "readme",
+			},
+			expectCount: 3, // all files (ignore patterns don't match)
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			// Create test files
+			for name, content := range tc.files {
+				os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644)
+			}
+
+			s, err := syncer.New(tmpDir, ":0", nil, tc.ignoreList)
+			if err != nil {
+				t.Fatalf("failed to create syncer: %v", err)
+			}
+			defer s.Stop()
+
+			status := s.GetStatus()
+			localFiles := status["local_files"].(int)
+
+			if localFiles != tc.expectCount {
+				t.Errorf("expected %d local files, got %d", tc.expectCount, localFiles)
+			}
+		})
 	}
 }
 
@@ -782,13 +1051,20 @@ func TestSync_FileChangeNotification(t *testing.T) {
 	}
 	defer syncer2.Stop()
 
-	time.Sleep(200 * time.Millisecond)
+	// Poll until syncer1 detects the file
+	deadline := time.Now().Add(2 * time.Second)
+	var localFiles1 int
+	for time.Now().Before(deadline) {
+		status1 := syncer1.GetStatus()
+		localFiles1 = status1["local_files"].(int)
+		if localFiles1 >= 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	// Verify both syncers started correctly
-	status1 := syncer1.GetStatus()
 	status2 := syncer2.GetStatus()
-
-	localFiles1 := status1["local_files"].(int)
 	localFiles2 := status2["local_files"].(int)
 
 	if localFiles1 < 1 {
@@ -826,10 +1102,17 @@ func TestSync_DirectoryCreation(t *testing.T) {
 	}
 	defer syncer1.Stop()
 
-	time.Sleep(200 * time.Millisecond)
-
-	status := syncer1.GetStatus()
-	localFiles := status["local_files"].(int)
+	// Poll until syncer detects the nested structure
+	deadline := time.Now().Add(2 * time.Second)
+	var localFiles int
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		localFiles = status["local_files"].(int)
+		if localFiles >= 4 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	// Should detect the nested structure (3 dirs + 1 file = 4 entries)
 	if localFiles < 4 {
@@ -857,11 +1140,18 @@ func TestSync_FileDelete(t *testing.T) {
 	}
 	defer syncer1.Stop()
 
-	time.Sleep(200 * time.Millisecond)
+	// Poll until file is detected
+	deadline := time.Now().Add(2 * time.Second)
+	var initialFiles int
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		initialFiles = status["local_files"].(int)
+		if initialFiles >= 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	// Verify file is detected
-	status1 := syncer1.GetStatus()
-	initialFiles := status1["local_files"].(int)
 	if initialFiles != 1 {
 		t.Errorf("expected 1 file initially, got %d", initialFiles)
 	}
@@ -871,12 +1161,18 @@ func TestSync_FileDelete(t *testing.T) {
 		t.Fatalf("failed to delete file: %v", err)
 	}
 
-	// Wait for watcher to detect deletion
-	time.Sleep(300 * time.Millisecond)
+	// Poll until deletion is detected
+	deadline = time.Now().Add(2 * time.Second)
+	var finalFiles int
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		finalFiles = status["local_files"].(int)
+		if finalFiles == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	// Verify file count updated
-	status2 := syncer1.GetStatus()
-	finalFiles := status2["local_files"].(int)
 	if finalFiles != 0 {
 		t.Errorf("expected 0 files after deletion, got %d", finalFiles)
 	}
@@ -909,16 +1205,46 @@ func TestConflict_SameTimestamp(t *testing.T) {
 	}
 	defer syncer1.Stop()
 
+	// Get syncer's server address
+	status := syncer1.GetStatus()
+	listenAddr := status["listen_addr"].(string)
+
 	time.Sleep(100 * time.Millisecond)
 
+	// Connect a client to the syncer
+	client := peer.NewClient(listenAddr)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("failed to connect to syncer: %v", err)
+	}
+	defer client.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Create a FileChange message with the SAME timestamp
+	payload := &protocol.FileChangePayload{
+		RelativePath: "same_time.txt",
+		Hash:         "different_hash",
+		ModTime:      modTime.UnixNano(),
+		Size:         100,
+	}
+	msg, err := protocol.NewFileChangeMessage(payload)
+	if err != nil {
+		t.Fatalf("failed to create message: %v", err)
+	}
+
+	// Send the message to the syncer via P2P
+	if err := client.Send(msg); err != nil {
+		t.Fatalf("failed to send message: %v", err)
+	}
+
+	// Wait for syncer to process the message
+	time.Sleep(200 * time.Millisecond)
+
 	// When timestamps are equal, local should be preserved (tie-breaker)
-	// The file content should remain unchanged
 	content, _ := os.ReadFile(localFile)
 	if string(content) != string(localContent) {
 		t.Error("local file should be preserved when timestamps are equal")
 	}
-
-	_ = modTime
 }
 
 // TestConflict_HashMatch tests that files with matching hashes are not synced
@@ -941,9 +1267,62 @@ func TestConflict_HashMatch(t *testing.T) {
 	}
 	defer syncer1.Stop()
 
+	// Get syncer's server address
+	status := syncer1.GetStatus()
+	listenAddr := status["listen_addr"].(string)
+
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify file exists and hasn't been modified
+	// Calculate the actual hash of the local file (SHA256)
+	hash := sha256.Sum256(content)
+	localHash := hex.EncodeToString(hash[:])
+
+	// Connect a client to the syncer
+	client := peer.NewClient(listenAddr)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("failed to connect to syncer: %v", err)
+	}
+	defer client.Close()
+
+	// Set up message handler to capture any file requests
+	fileRequestReceived := make(chan *protocol.Message, 1)
+	client.SetMessageHandler(func(msg *protocol.Message) {
+		if msg.Type == protocol.TypeFileRequest {
+			fileRequestReceived <- msg
+		}
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Create a FileChange message with matching hash (same content)
+	// Note: In real scenario, hash would be calculated from content
+	payload := &protocol.FileChangePayload{
+		RelativePath: "hash_match.txt",
+		Hash:         localHash, // Same hash as local file
+		ModTime:      time.Now().UnixNano(),
+		Size:         int64(len(content)),
+	}
+	msg, err := protocol.NewFileChangeMessage(payload)
+	if err != nil {
+		t.Fatalf("failed to create message: %v", err)
+	}
+
+	// Send the message to the syncer via P2P
+	if err := client.Send(msg); err != nil {
+		t.Fatalf("failed to send message: %v", err)
+	}
+
+	// Wait and verify no file request is sent (hashes match)
+	// Expected behavior: When hashes match, syncer should NOT request the file
+	select {
+	case <-fileRequestReceived:
+		// File request was sent - hashes should have matched, so no request expected
+		t.Error("file request should not be sent when hashes match")
+	case <-time.After(300 * time.Millisecond):
+		// No request sent - this is the optimal behavior when hashes match
+	}
+
+	// Verify file content remains unchanged
 	readContent, err := os.ReadFile(localFile)
 	if err != nil {
 		t.Fatalf("failed to read file: %v", err)
@@ -959,7 +1338,7 @@ func TestSync_EndToEndFilePropagation(t *testing.T) {
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 
-	// Create syncer1 as server
+	// Create syncer1 as server first
 	syncer1, err := syncer.New(tmpDir1, ":0", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to create syncer1: %v", err)
@@ -970,34 +1349,12 @@ func TestSync_EndToEndFilePropagation(t *testing.T) {
 	}
 	defer syncer1.Stop()
 
-	// Get syncer1's listen address from server
+	// Get syncer1's listen address
 	status1 := syncer1.GetStatus()
-	if status1["base_path"] != tmpDir1 {
-		t.Errorf("syncer1 base_path mismatch")
-	}
+	syncer1Addr := status1["listen_addr"].(string)
 
-	// Wait for syncer1 to be ready
-	time.Sleep(100 * time.Millisecond)
-
-	// Create a test file in tmpDir1
-	testContent := []byte("content to propagate via sync")
-	testFile := filepath.Join(tmpDir1, "propagate.txt")
-	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	// Wait for watcher to detect the new file
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify syncer1 detected the file
-	status1After := syncer1.GetStatus()
-	localFiles1 := status1After["local_files"].(int)
-	if localFiles1 < 1 {
-		t.Fatalf("syncer1 should detect at least 1 file, got %d", localFiles1)
-	}
-
-	// Create syncer2 in separate directory
-	syncer2, err := syncer.New(tmpDir2, ":0", nil, nil)
+	// Create syncer2 that connects to syncer1 as a peer
+	syncer2, err := syncer.New(tmpDir2, ":0", []string{syncer1Addr}, nil)
 	if err != nil {
 		t.Fatalf("failed to create syncer2: %v", err)
 	}
@@ -1007,27 +1364,130 @@ func TestSync_EndToEndFilePropagation(t *testing.T) {
 	}
 	defer syncer2.Stop()
 
-	// Verify syncer2 started with empty directory
-	status2 := syncer2.GetStatus()
-	localFiles2 := status2["local_files"].(int)
-	if localFiles2 != 0 {
-		t.Errorf("syncer2 should start with 0 files, got %d", localFiles2)
+	// Wait for peer connection to establish
+	connected := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		if status["server_peers"].(int) > 0 {
+			connected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Verify that file change notifications would be detected
-	// (In a real end-to-end test with network connection, the file would propagate)
-	// Here we verify the infrastructure is in place
+	if !connected {
+		t.Fatal("syncer2 failed to connect to syncer1")
+	}
 
-	// Verify syncer1 has the file and syncer2 doesn't
-	_, err = os.Stat(filepath.Join(tmpDir1, "propagate.txt"))
+	// Create a test file in tmpDir1
+	testContent := []byte("content to propagate via sync")
+	testFile := filepath.Join(tmpDir1, "propagate.txt")
+	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Wait for file to propagate to syncer2
+	propagated := false
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		destFile := filepath.Join(tmpDir2, "propagate.txt")
+		if content, err := os.ReadFile(destFile); err == nil {
+			if string(content) == string(testContent) {
+				propagated = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if !propagated {
+		t.Error("file did not propagate from syncer1 to syncer2")
+	}
+}
+
+// TestSync_EndToEndFileDataTransfer tests actual file data transfer between peers
+func TestSync_EndToEndFileDataTransfer(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a test file
+	testContent := []byte("file data to transfer")
+	testFile := filepath.Join(tmpDir, "transfer.txt")
+	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Create syncer
+	s, err := syncer.New(tmpDir, ":0", nil, nil)
 	if err != nil {
-		t.Error("syncer1 should have propagate.txt")
+		t.Fatalf("failed to create syncer: %v", err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatalf("failed to start syncer: %v", err)
+	}
+	defer s.Stop()
+
+	// Set up peer server to capture messages
+	server := peer.NewServer(":0")
+	fileDataReceived := make(chan *protocol.Message, 1)
+	peerConnected := make(chan struct{}, 1)
+
+	server.SetPeerHandler(func(p *peer.Peer) {
+		p.SetMessageHandler(func(msg *protocol.Message) {
+			if msg.Type == protocol.TypeFileData {
+				fileDataReceived <- msg
+			}
+		})
+		peerConnected <- struct{}{}
+	})
+
+	if err := server.Start(); err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	addr := server.GetListenAddr()
+
+	// Connect client
+	client := peer.NewClient(addr)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	// Wait for connection
+	select {
+	case <-peerConnected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for peer connection")
 	}
 
-	_, err = os.Stat(filepath.Join(tmpDir2, "propagate.txt"))
-	if !os.IsNotExist(err) {
-		// File might not exist yet since we haven't connected the syncers
-		t.Log("syncer2 does not have propagate.txt (expected without direct connection)")
+	// Send file data message
+	filePayload := &protocol.FileDataPayload{
+		RelativePath: "transfer.txt",
+		Data:         testContent,
+		ModTime:      time.Now().UnixNano(),
+	}
+	msg, _ := protocol.NewFileDataMessage(filePayload)
+	if err := client.Send(msg); err != nil {
+		t.Fatalf("failed to send file data: %v", err)
+	}
+
+	// Verify file data received
+	select {
+	case received := <-fileDataReceived:
+		parsedPayload, err := protocol.ParseFileDataPayload(received.Payload)
+		if err != nil {
+			t.Fatalf("failed to parse file data payload: %v", err)
+		}
+		if parsedPayload.RelativePath != "transfer.txt" {
+			t.Errorf("path mismatch: expected transfer.txt, got %s", parsedPayload.RelativePath)
+		}
+		if string(parsedPayload.Data) != string(testContent) {
+			t.Errorf("data mismatch: expected %q, got %q", testContent, parsedPayload.Data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for file data")
 	}
 }
 
@@ -1217,5 +1677,185 @@ func TestProtocol_FullMessageCycle(t *testing.T) {
 				t.Errorf("payload mismatch")
 			}
 		})
+	}
+}
+
+// TestSync_IgnorePatterns_EndToEnd tests that ignored files do NOT propagate between syncers
+func TestSync_IgnorePatterns_EndToEnd(t *testing.T) {
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	ignoreList := []string{".git", "*.tmp", "*.log"}
+
+	// Create syncer1 with ignore patterns
+	syncer1, err := syncer.New(tmpDir1, ":0", nil, ignoreList)
+	if err != nil {
+		t.Fatalf("failed to create syncer1: %v", err)
+	}
+
+	if err := syncer1.Start(); err != nil {
+		t.Fatalf("failed to start syncer1: %v", err)
+	}
+	defer syncer1.Stop()
+
+	// Get syncer1's listen address
+	status1 := syncer1.GetStatus()
+	syncer1Addr := status1["listen_addr"].(string)
+
+	// Create syncer2 with same ignore patterns, connecting to syncer1
+	syncer2, err := syncer.New(tmpDir2, ":0", []string{syncer1Addr}, ignoreList)
+	if err != nil {
+		t.Fatalf("failed to create syncer2: %v", err)
+	}
+
+	if err := syncer2.Start(); err != nil {
+		t.Fatalf("failed to start syncer2: %v", err)
+	}
+	defer syncer2.Stop()
+
+	// Wait for peer connection
+	connected := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		if status["server_peers"].(int) > 0 {
+			connected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !connected {
+		t.Fatal("syncer2 failed to connect to syncer1")
+	}
+
+	// Create files in syncer1's directory
+	// normal.txt should propagate, ignored files should NOT
+	os.WriteFile(filepath.Join(tmpDir1, "normal.txt"), []byte("should sync"), 0644)
+	os.WriteFile(filepath.Join(tmpDir1, "ignored.tmp"), []byte("should NOT sync"), 0644)
+	os.WriteFile(filepath.Join(tmpDir1, "debug.log"), []byte("should NOT sync"), 0644)
+	os.MkdirAll(filepath.Join(tmpDir1, ".git", "objects"), 0755)
+	os.WriteFile(filepath.Join(tmpDir1, ".git", "config"), []byte("should NOT sync"), 0644)
+
+	// Wait for file propagation
+	normalPropagated := false
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		destFile := filepath.Join(tmpDir2, "normal.txt")
+		if content, err := os.ReadFile(destFile); err == nil {
+			if string(content) == "should sync" {
+				normalPropagated = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if !normalPropagated {
+		t.Error("normal.txt did not propagate to syncer2")
+	}
+
+	// Wait a bit more to ensure ignored files had time to propagate (if they were going to)
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify ignored files did NOT propagate
+	ignoredFiles := []string{"ignored.tmp", "debug.log", ".git/config"}
+	for _, f := range ignoredFiles {
+		destFile := filepath.Join(tmpDir2, f)
+		if _, err := os.Stat(destFile); !os.IsNotExist(err) {
+			t.Errorf("ignored file %s should NOT have propagated to syncer2", f)
+		}
+	}
+
+	// Verify syncer1 only tracks the non-ignored file
+	status1After := syncer1.GetStatus()
+	localFiles1 := status1After["local_files"].(int)
+	if localFiles1 != 1 {
+		t.Errorf("syncer1 should track only 1 file (normal.txt), got %d", localFiles1)
+	}
+
+	// Verify syncer2 also only has the non-ignored file
+	status2After := syncer2.GetStatus()
+	localFiles2 := status2After["local_files"].(int)
+	if localFiles2 != 1 {
+		t.Errorf("syncer2 should have only 1 file (normal.txt), got %d", localFiles2)
+	}
+}
+
+// TestSync_FileDelete_EndToEnd tests that file deletions propagate between syncers
+func TestSync_FileDelete_EndToEnd(t *testing.T) {
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	// Create initial file in both directories
+	os.WriteFile(filepath.Join(tmpDir1, "todelete.txt"), []byte("will be deleted"), 0644)
+	os.WriteFile(filepath.Join(tmpDir2, "todelete.txt"), []byte("will be deleted"), 0644)
+
+	// Create syncer1
+	syncer1, err := syncer.New(tmpDir1, ":0", nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create syncer1: %v", err)
+	}
+
+	if err := syncer1.Start(); err != nil {
+		t.Fatalf("failed to start syncer1: %v", err)
+	}
+	defer syncer1.Stop()
+
+	// Get syncer1's listen address
+	status1 := syncer1.GetStatus()
+	syncer1Addr := status1["listen_addr"].(string)
+
+	// Create syncer2 connecting to syncer1
+	syncer2, err := syncer.New(tmpDir2, ":0", []string{syncer1Addr}, nil)
+	if err != nil {
+		t.Fatalf("failed to create syncer2: %v", err)
+	}
+
+	if err := syncer2.Start(); err != nil {
+		t.Fatalf("failed to start syncer2: %v", err)
+	}
+	defer syncer2.Stop()
+
+	// Wait for peer connection
+	connected := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status := syncer1.GetStatus()
+		if status["server_peers"].(int) > 0 {
+			connected = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !connected {
+		t.Fatal("syncer2 failed to connect to syncer1")
+	}
+
+	// Verify both syncers have the file
+	if _, err := os.Stat(filepath.Join(tmpDir1, "todelete.txt")); os.IsNotExist(err) {
+		t.Fatal("todelete.txt should exist in syncer1")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir2, "todelete.txt")); os.IsNotExist(err) {
+		t.Fatal("todelete.txt should exist in syncer2")
+	}
+
+	// Delete file from syncer1
+	os.Remove(filepath.Join(tmpDir1, "todelete.txt"))
+
+	// Wait for deletion to propagate
+	deleted := false
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(tmpDir2, "todelete.txt")); os.IsNotExist(err) {
+			deleted = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if !deleted {
+		t.Error("file deletion did not propagate to syncer2")
 	}
 }

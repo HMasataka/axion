@@ -511,15 +511,21 @@ func TestDecode_EmptyReader(t *testing.T) {
 }
 
 // TestDecode_ZeroLengthPayload tests decode with zero length payload
+// Specification: A valid message must contain at least a JSON object,
+// so zero-length payload must be rejected with an error.
 func TestDecode_ZeroLengthPayload(t *testing.T) {
-	// Create a message with empty payload
+	// Create a message with zero length header (no payload data follows)
 	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data, 0)
 
 	reader := bytes.NewReader(data)
 	_, err := Decode(reader)
+
+	// Zero-length payload must fail because:
+	// 1. Message struct requires JSON with at least {"type":N,"payload":...}
+	// 2. json.Unmarshal on empty data returns "unexpected end of JSON input"
 	if err == nil {
-		t.Log("zero length payload may be valid or invalid depending on implementation")
+		t.Error("zero-length payload must be rejected - a valid message requires JSON content")
 	}
 }
 

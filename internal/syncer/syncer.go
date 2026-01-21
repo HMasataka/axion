@@ -421,6 +421,7 @@ func (s *Syncer) GetStatus() map[string]interface{} {
 	status["connected_clients"] = connectedClients
 	status["server_peers"] = serverPeers
 	status["base_path"] = s.basePath
+	status["listen_addr"] = s.server.GetListenAddr()
 
 	files, _ := s.scanLocalFiles()
 	status["local_files"] = len(files)

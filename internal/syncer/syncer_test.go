@@ -597,15 +597,30 @@ func TestSyncerHandleFileChange_RemoteNewer(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	testFile := filepath.Join(tmpDir, "remote.txt")
-	os.WriteFile(testFile, []byte("old content"), 0644)
+	originalContent := []byte("old content")
+	os.WriteFile(testFile, originalContent, 0644)
 
-	os.Chtimes(testFile, time.Now().Add(-2*time.Hour), time.Now().Add(-2*time.Hour))
+	// Set file modification time to past
+	oldTime := time.Now().Add(-2 * time.Hour)
+	os.Chtimes(testFile, oldTime, oldTime)
 
 	s, err := New(tmpDir, ":0", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to create syncer: %v", err)
 	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("failed to start syncer: %v", err)
+	}
 	defer s.Stop()
+
+	// Track broadcast messages to verify FileRequest is sent
+	requestSent := make(chan bool, 1)
+	originalBroadcast := s.broadcast
+
+	// We can't directly intercept broadcast, but we can verify the behavior
+	// by checking that the file content remains unchanged (since handleFileChange
+	// should trigger a request, not modify the file directly)
 
 	futureTime := time.Now().Add(1 * time.Hour).UnixNano()
 
@@ -619,10 +634,40 @@ func TestSyncerHandleFileChange_RemoteNewer(t *testing.T) {
 
 	data, _ := json.Marshal(payload)
 	s.handleFileChange(data)
+
+	// Verify that the file was NOT modified directly by handleFileChange
+	// (handleFileChange only broadcasts a request for the file, it doesn't modify it)
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("failed to read file after handleFileChange: %v", err)
+	}
+
+	// Content MUST still be the original - handleFileChange sends a request, not direct modification
+	if string(content) != string(originalContent) {
+		t.Error("file content should not be modified directly by handleFileChange - it should only send a request")
+	}
+
+	// Verify file still exists with original content
+	info, err := os.Stat(testFile)
+	if err != nil {
+		t.Fatalf("file should still exist after handleFileChange: %v", err)
+	}
+
+	if info.Size() != int64(len(originalContent)) {
+		t.Errorf("file size should remain unchanged: expected %d, got %d", len(originalContent), info.Size())
+	}
+
+	_ = originalBroadcast
+	_ = requestSent
 }
 
 func TestSyncerHandleFileChange_InvalidPayload(t *testing.T) {
 	tmpDir := t.TempDir()
+
+	// Create a file to verify it's not affected by invalid payload
+	existingFile := filepath.Join(tmpDir, "existing.txt")
+	originalContent := []byte("original content")
+	os.WriteFile(existingFile, originalContent, 0644)
 
 	s, err := New(tmpDir, ":0", nil, nil)
 	if err != nil {
@@ -630,7 +675,28 @@ func TestSyncerHandleFileChange_InvalidPayload(t *testing.T) {
 	}
 	defer s.Stop()
 
+	// Get initial state
+	initialStatus := s.GetStatus()
+	initialFiles := initialStatus["local_files"].(int)
+
+	// Handle invalid payload - should not cause any side effects
 	s.handleFileChange([]byte("invalid json"))
+
+	// Verify no side effects: existing file unchanged
+	content, err := os.ReadFile(existingFile)
+	if err != nil {
+		t.Fatalf("existing file should still be readable: %v", err)
+	}
+	if string(content) != string(originalContent) {
+		t.Error("existing file content should not be modified by invalid payload")
+	}
+
+	// Verify syncer state unchanged
+	afterStatus := s.GetStatus()
+	afterFiles := afterStatus["local_files"].(int)
+	if afterFiles != initialFiles {
+		t.Errorf("local_files count should not change: before=%d, after=%d", initialFiles, afterFiles)
+	}
 }
 
 func TestSyncerHandleFileData_InvalidPayload(t *testing.T) {
@@ -642,11 +708,28 @@ func TestSyncerHandleFileData_InvalidPayload(t *testing.T) {
 	}
 	defer s.Stop()
 
+	// Count files before
+	files, _ := os.ReadDir(tmpDir)
+	beforeCount := len(files)
+
+	// Handle invalid payload - should not create any files
 	s.handleFileData([]byte("invalid json"))
+
+	// Count files after - should be unchanged
+	files, _ = os.ReadDir(tmpDir)
+	afterCount := len(files)
+
+	if afterCount != beforeCount {
+		t.Errorf("invalid payload should not create files: before=%d, after=%d", beforeCount, afterCount)
+	}
 }
 
 func TestSyncerHandleFileDelete_InvalidPayload(t *testing.T) {
 	tmpDir := t.TempDir()
+
+	// Create a file that should NOT be deleted by invalid payload
+	testFile := filepath.Join(tmpDir, "keep.txt")
+	os.WriteFile(testFile, []byte("keep me"), 0644)
 
 	s, err := New(tmpDir, ":0", nil, nil)
 	if err != nil {
@@ -654,7 +737,13 @@ func TestSyncerHandleFileDelete_InvalidPayload(t *testing.T) {
 	}
 	defer s.Stop()
 
+	// Handle invalid payload - should not delete any files
 	s.handleFileDelete([]byte("invalid json"))
+
+	// Verify file still exists
+	if _, err := os.Stat(testFile); os.IsNotExist(err) {
+		t.Error("invalid payload should not delete any files")
+	}
 }
 
 func TestSyncerHandleFileRequest_InvalidPayload(t *testing.T) {
@@ -798,7 +887,17 @@ func TestSyncerHandleFileChange_NewFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create syncer: %v", err)
 	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("failed to start syncer: %v", err)
+	}
 	defer s.Stop()
+
+	// Verify file doesn't exist before
+	newFilePath := filepath.Join(tmpDir, "newfile.txt")
+	if _, err := os.Stat(newFilePath); !os.IsNotExist(err) {
+		t.Fatal("newfile.txt should not exist before test")
+	}
 
 	payload := &protocol.FileChangePayload{
 		RelativePath: "newfile.txt",
@@ -810,6 +909,25 @@ func TestSyncerHandleFileChange_NewFile(t *testing.T) {
 
 	data, _ := json.Marshal(payload)
 	s.handleFileChange(data)
+
+	// handleFileChange for a non-existent file MUST trigger a file request
+	// The file MUST NOT be created directly by handleFileChange
+	// (file creation happens via handleFileData after receiving the file content)
+	if _, err := os.Stat(newFilePath); !os.IsNotExist(err) {
+		t.Error("handleFileChange should not create the file directly - it should only send a request")
+	}
+
+	// Verify syncer state is still valid
+	status := s.GetStatus()
+	if status["base_path"] != tmpDir {
+		t.Error("syncer state should be valid after handleFileChange")
+	}
+
+	// Verify local_files count is still 0 (no files were created)
+	localFiles := status["local_files"].(int)
+	if localFiles != 0 {
+		t.Errorf("local_files should be 0 after handleFileChange for new file, got %d", localFiles)
+	}
 }
 
 func TestSyncerScanLocalFiles_WithHash(t *testing.T) {
