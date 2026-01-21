@@ -309,16 +309,24 @@ func TestCrossPlatform_CaseSensitivity(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	file1 := filepath.Join(tmpDir, "TestFile.txt")
-	if err := os.WriteFile(file1, []byte("content1"), 0644); err != nil {
+	content1 := []byte("content1")
+	if err := os.WriteFile(file1, content1, 0644); err != nil {
 		t.Fatalf("failed to create first file: %v", err)
 	}
 
 	// Try to create a file with different case
 	file2 := filepath.Join(tmpDir, "testfile.txt")
-	err := os.WriteFile(file2, []byte("content2"), 0644)
+	content2 := []byte("content2")
+	if err := os.WriteFile(file2, content2, 0644); err != nil {
+		t.Fatalf("failed to create second file: %v", err)
+	}
 
 	// Check if both files exist (case-sensitive) or they're the same (case-insensitive)
-	entries, _ := os.ReadDir(tmpDir)
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to read directory: %v", err)
+	}
+
 	fileCount := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -326,14 +334,33 @@ func TestCrossPlatform_CaseSensitivity(t *testing.T) {
 		}
 	}
 
+	// Verify behavior based on file system type
 	if fileCount == 1 {
-		t.Log("File system is case-insensitive (typical on macOS/Windows)")
+		// Case-insensitive: second write overwrote first
+		readContent, err := os.ReadFile(file1)
+		if err != nil {
+			t.Fatalf("failed to read file: %v", err)
+		}
+		// On case-insensitive FS, the content should be from the second write
+		if string(readContent) != string(content2) {
+			t.Errorf("on case-insensitive FS, expected content2, got %s", string(readContent))
+		}
 	} else if fileCount == 2 {
-		t.Log("File system is case-sensitive (typical on Linux)")
+		// Case-sensitive: both files exist independently
+		readContent1, err1 := os.ReadFile(file1)
+		readContent2, err2 := os.ReadFile(file2)
+		if err1 != nil || err2 != nil {
+			t.Fatalf("failed to read files: %v, %v", err1, err2)
+		}
+		if string(readContent1) != string(content1) {
+			t.Errorf("content1 mismatch: expected %s, got %s", string(content1), string(readContent1))
+		}
+		if string(readContent2) != string(content2) {
+			t.Errorf("content2 mismatch: expected %s, got %s", string(content2), string(readContent2))
+		}
+	} else {
+		t.Errorf("unexpected file count: %d", fileCount)
 	}
-
-	// Just ensure no error occurred
-	_ = err
 }
 
 // TestCrossPlatform_FilePermissions_Strict tests file permissions with strict verification
@@ -448,17 +475,21 @@ func TestCrossPlatform_RestrictedDirectory(t *testing.T) {
 	}
 
 	mode := info.Mode().Perm()
-	if mode&0200 != 0 {
-		t.Log("Directory appears writable (may happen as root)")
-	}
 
-	// Try to create file in read-only directory - should fail
+	// Try to create file in read-only directory - should fail for non-root
 	testFile := filepath.Join(readOnlyDir, "test.txt")
 	err = os.WriteFile(testFile, []byte("content"), 0644)
 	if err == nil {
-		t.Log("write to read-only dir succeeded (may happen as root)")
-	} else if !os.IsPermission(err) {
-		t.Logf("expected permission error, got: %v", err)
+		// Running as root - skip permission check
+		os.Remove(testFile)
+		if mode&0200 == 0 {
+			t.Log("write succeeded despite non-writable mode (running as root)")
+		}
+	} else {
+		// Expected behavior: should fail with permission error
+		if !os.IsPermission(err) {
+			t.Errorf("expected permission error, got: %v", err)
+		}
 	}
 }
 

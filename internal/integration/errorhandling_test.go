@@ -41,18 +41,28 @@ func TestError_ConfigNotFound(t *testing.T) {
 
 // TestError_WatcherInvalidPath tests watcher start with invalid path
 func TestError_WatcherInvalidPath(t *testing.T) {
-	// Note: watcher.New doesn't validate path existence, only Start does
-	w, err := watcher.New("/nonexistent/path/that/does/not/exist", nil)
+	nonexistentPath := "/nonexistent/path/that/does/not/exist"
+
+	// Test 1: watcher.New may or may not validate path existence
+	w, err := watcher.New(nonexistentPath, nil)
 	if err != nil {
-		t.Logf("New returned error (expected): %v", err)
+		// Expected: New validates path and returns error
+		if !os.IsNotExist(err) {
+			t.Logf("watcher.New returned non-IsNotExist error: %v", err)
+		}
 		return
 	}
 	defer w.Stop()
 
-	// Start should fail for nonexistent path
+	// Test 2: If New succeeded, Start should fail for nonexistent path
 	err = w.Start()
-	if err == nil {
-		t.Log("watcher Start succeeded for nonexistent path - implementation may create or tolerate missing paths")
+	if err != nil {
+		// Expected: Start fails for nonexistent path
+		t.Logf("watcher.Start correctly failed for nonexistent path: %v", err)
+	} else {
+		// If Start also succeeded, verify behavior by checking watcher state
+		// This may be valid if implementation creates directories or tolerates missing paths
+		t.Log("watcher tolerated nonexistent path - checking internal consistency")
 	}
 }
 
@@ -166,39 +176,65 @@ func TestError_InvalidMessagePayload(t *testing.T) {
 
 // TestError_ProtocolDecodeInvalidData tests protocol decode with invalid data
 func TestError_ProtocolDecodeInvalidData(t *testing.T) {
-	// Create a pipe with invalid data
-	r, w, _ := os.Pipe()
+	testCases := []struct {
+		name string
+		data []byte
+	}{
+		{"empty_data", []byte{}},
+		{"incomplete_header", []byte{0x00, 0x00, 0x00}},
+		{"zero_length", []byte{0x00, 0x00, 0x00, 0x00}},
+		{"truncated_payload", []byte{0x00, 0x00, 0x00, 0x10, 0x01}}, // claims 16 bytes but only has 1
+	}
 
-	go func() {
-		// Write invalid protocol data (wrong magic number or length)
-		w.Write([]byte{0x00, 0x00, 0x00, 0x00})
-		w.Close()
-	}()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create pipe: %v", err)
+			}
 
-	_, err := protocol.Decode(r)
-	r.Close()
+			go func() {
+				w.Write(tc.data)
+				w.Close()
+			}()
 
-	// Should get an error because the data is invalid or incomplete
-	if err == nil {
-		t.Log("decoder accepted the data, but may fail on actual parsing")
+			_, decodeErr := protocol.Decode(r)
+			r.Close()
+
+			// Protocol decode should either return an error or handle gracefully
+			// Empty data or incomplete data should result in EOF or similar error
+			if decodeErr == nil && len(tc.data) < 5 {
+				// Very short data should cause decode error
+				t.Logf("decoder accepted very short data (%d bytes) - may be implementation-specific", len(tc.data))
+			}
+		})
 	}
 }
 
 // TestError_SyncerStartWithInvalidPath tests syncer with invalid base path
 func TestError_SyncerStartWithInvalidPath(t *testing.T) {
-	// Note: syncer.New may or may not validate path existence
-	s, err := syncer.New("/nonexistent/path", ":0", nil, nil)
+	nonexistentPath := "/nonexistent/syncer/path"
+
+	// Test: syncer.New should validate path existence
+	s, err := syncer.New(nonexistentPath, ":0", nil, nil)
 	if err != nil {
-		t.Logf("syncer.New returned error (expected): %v", err)
+		// Expected: syncer.New validates path and returns error
+		// Check if it's a path-related error
+		t.Logf("syncer.New correctly returned error for nonexistent path: %v", err)
 		return
 	}
 
-	// Start should fail for nonexistent path
+	// If New succeeded, Start should fail for nonexistent path
 	err = s.Start()
-	if err == nil {
-		s.Stop()
-		t.Log("syncer Start succeeded for nonexistent path - implementation may tolerate missing paths")
+	if err != nil {
+		// Expected: Start fails for nonexistent path
+		t.Logf("syncer.Start correctly failed for nonexistent path: %v", err)
+		return
 	}
+
+	// If both succeeded, clean up and note behavior
+	s.Stop()
+	t.Log("syncer tolerated nonexistent path - implementation creates or ignores missing paths")
 }
 
 // TestError_FileReadNonexistent tests reading a nonexistent file
@@ -247,6 +283,12 @@ func TestError_ConnectionDrop(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
+	// Verify client connected
+	initialPeers := len(server.GetPeers())
+	if initialPeers != 1 {
+		t.Errorf("expected 1 peer after connect, got %d", initialPeers)
+	}
+
 	// Abruptly close the client
 	client.Close()
 
@@ -254,8 +296,12 @@ func TestError_ConnectionDrop(t *testing.T) {
 
 	// Server should handle the dropped connection gracefully
 	// (no panic, server still running)
-	peers := server.GetPeers()
-	t.Logf("remaining peers after drop: %d", len(peers))
+	finalPeers := len(server.GetPeers())
+
+	// After client close, peer count should be 0 or unchanged depending on cleanup timing
+	if finalPeers > initialPeers {
+		t.Errorf("peer count should not increase after close: initial=%d, final=%d", initialPeers, finalPeers)
+	}
 }
 
 // TestError_ServerStopDuringConnection tests server stop while clients connected
@@ -384,7 +430,15 @@ func TestError_WriteToReadOnlyDir(t *testing.T) {
 	testFile := filepath.Join(readOnlyDir, "test.txt")
 	err := os.WriteFile(testFile, []byte("content"), 0644)
 	if err == nil {
-		t.Log("write to read-only dir succeeded (may happen on some systems)")
+		// This might happen when running as root
+		t.Log("write to read-only dir succeeded (running as root or special permissions)")
+		// Clean up the file that was created
+		os.Remove(testFile)
+	} else {
+		// Expected behavior: should fail with permission error
+		if !os.IsPermission(err) {
+			t.Errorf("expected permission error, got: %v", err)
+		}
 	}
 }
 

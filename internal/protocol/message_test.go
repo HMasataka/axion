@@ -501,6 +501,179 @@ func TestParseFileDataPayload_LargeData(t *testing.T) {
 	}
 }
 
+// TestDecode_EmptyReader tests decode with empty reader
+func TestDecode_EmptyReader(t *testing.T) {
+	reader := bytes.NewReader([]byte{})
+	_, err := Decode(reader)
+	if err == nil {
+		t.Error("expected error for empty reader, got nil")
+	}
+}
+
+// TestDecode_ZeroLengthPayload tests decode with zero length payload
+func TestDecode_ZeroLengthPayload(t *testing.T) {
+	// Create a message with empty payload
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint32(data, 0)
+
+	reader := bytes.NewReader(data)
+	_, err := Decode(reader)
+	if err == nil {
+		t.Log("zero length payload may be valid or invalid depending on implementation")
+	}
+}
+
+// TestDecode_NegativeLengthAttempt tests handling of potential negative length
+func TestDecode_NegativeLengthAttempt(t *testing.T) {
+	// Maximum uint32 value (0xFFFFFFFF) - would be interpreted as very large length
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint32(data, 0xFFFFFFFF)
+
+	reader := bytes.NewReader(data)
+	_, err := Decode(reader)
+	if err == nil {
+		t.Error("expected error for extremely large length value")
+	}
+}
+
+// TestEncode_EmptyPayload tests encoding with empty payload
+func TestEncode_EmptyPayload(t *testing.T) {
+	msg := &Message{
+		Type:    TypeFileChange,
+		Payload: []byte{},
+	}
+
+	data, err := Encode(msg)
+	if err != nil {
+		t.Fatalf("failed to encode empty payload: %v", err)
+	}
+
+	if len(data) < 4 {
+		t.Error("encoded data should at least contain length header")
+	}
+}
+
+// TestEncode_NilPayload tests encoding with nil payload
+func TestEncode_NilPayload(t *testing.T) {
+	msg := &Message{
+		Type:    TypeFileChange,
+		Payload: nil,
+	}
+
+	data, err := Encode(msg)
+	if err != nil {
+		t.Logf("encoding nil payload: %v", err)
+		return
+	}
+
+	if len(data) < 4 {
+		t.Error("encoded data should at least contain length header")
+	}
+}
+
+// TestMessageTypes tests all message type constants
+func TestMessageTypes(t *testing.T) {
+	types := []struct {
+		name     string
+		msgType  MessageType
+		expected MessageType
+	}{
+		{"TypeFileChange", TypeFileChange, 1},
+		{"TypeFileRequest", TypeFileRequest, 2},
+		{"TypeFileData", TypeFileData, 3},
+		{"TypeFileDelete", TypeFileDelete, 4},
+		{"TypeSyncRequest", TypeSyncRequest, 5},
+		{"TypeSyncResponse", TypeSyncResponse, 6},
+		{"TypeAck", TypeAck, 7},
+	}
+
+	for _, tc := range types {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.msgType != tc.expected {
+				t.Errorf("expected %d, got %d", tc.expected, tc.msgType)
+			}
+		})
+	}
+}
+
+// TestFileInfo_Fields tests FileInfo struct fields
+func TestFileInfo_Fields(t *testing.T) {
+	fi := FileInfo{
+		RelativePath: "test/path.txt",
+		Hash:         "sha256hash",
+		ModTime:      1234567890,
+		Size:         1024,
+		IsDir:        false,
+	}
+
+	if fi.RelativePath != "test/path.txt" {
+		t.Errorf("RelativePath mismatch")
+	}
+	if fi.Hash != "sha256hash" {
+		t.Errorf("Hash mismatch")
+	}
+	if fi.ModTime != 1234567890 {
+		t.Errorf("ModTime mismatch")
+	}
+	if fi.Size != 1024 {
+		t.Errorf("Size mismatch")
+	}
+	if fi.IsDir != false {
+		t.Errorf("IsDir mismatch")
+	}
+}
+
+// TestFileInfo_Directory tests FileInfo for directory
+func TestFileInfo_Directory(t *testing.T) {
+	fi := FileInfo{
+		RelativePath: "test/directory",
+		Hash:         "",
+		ModTime:      1234567890,
+		Size:         0,
+		IsDir:        true,
+	}
+
+	if !fi.IsDir {
+		t.Error("should be marked as directory")
+	}
+	if fi.Hash != "" {
+		t.Error("directory hash should be empty")
+	}
+}
+
+// TestParsePayloads_Nil tests parsing nil data
+func TestParsePayloads_Nil(t *testing.T) {
+	_, err := ParseFileChangePayload(nil)
+	if err == nil {
+		t.Error("expected error for nil FileChangePayload")
+	}
+
+	_, err = ParseFileRequestPayload(nil)
+	if err == nil {
+		t.Error("expected error for nil FileRequestPayload")
+	}
+
+	_, err = ParseFileDataPayload(nil)
+	if err == nil {
+		t.Error("expected error for nil FileDataPayload")
+	}
+
+	_, err = ParseFileDeletePayload(nil)
+	if err == nil {
+		t.Error("expected error for nil FileDeletePayload")
+	}
+
+	_, err = ParseSyncRequestPayload(nil)
+	if err == nil {
+		t.Error("expected error for nil SyncRequestPayload")
+	}
+
+	_, err = ParseSyncResponsePayload(nil)
+	if err == nil {
+		t.Error("expected error for nil SyncResponsePayload")
+	}
+}
+
 func BenchmarkEncode(b *testing.B) {
 	msg := &Message{
 		Type:    TypeFileChange,

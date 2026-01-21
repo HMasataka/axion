@@ -313,15 +313,25 @@ func TestServerAcceptConnection(t *testing.T) {
 	}
 	defer conn.Close()
 
+	// Wait for peer connection using channel instead of sleep
 	select {
 	case <-peerConnected:
+		// Connection established
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for peer connection")
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// Use retry loop instead of fixed sleep
+	var peers []*Peer
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		peers = s.GetPeers()
+		if len(peers) == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
-	peers := s.GetPeers()
 	if len(peers) != 1 {
 		t.Errorf("expected 1 peer, got %d", len(peers))
 	}
@@ -524,6 +534,12 @@ func TestPeerMessageHandler(t *testing.T) {
 func TestServerMultipleConnections(t *testing.T) {
 	s := NewServer(":0")
 
+	connectedCount := 0
+	connectedChan := make(chan struct{}, 3)
+	s.SetPeerHandler(func(p *Peer) {
+		connectedChan <- struct{}{}
+	})
+
 	if err := s.Start(); err != nil {
 		t.Fatalf("failed to start server: %v", err)
 	}
@@ -546,7 +562,16 @@ func TestServerMultipleConnections(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for all connections using channel
+	timeout := time.After(3 * time.Second)
+	for connectedCount < 3 {
+		select {
+		case <-connectedChan:
+			connectedCount++
+		case <-timeout:
+			t.Fatalf("timeout: only %d/3 connections established", connectedCount)
+		}
+	}
 
 	peers := s.GetPeers()
 	if len(peers) != 3 {
