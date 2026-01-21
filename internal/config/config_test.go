@@ -141,7 +141,7 @@ func TestGetConfigPath(t *testing.T) {
 	path := GetConfigPath()
 
 	homeDir, _ := os.UserHomeDir()
-	expected := filepath.Join(homeDir, ".config", "filesync", "config.json")
+	expected := filepath.Join(homeDir, ".config", "axion", "config.json")
 
 	if path != expected {
 		t.Errorf("expected config path %s, got %s", expected, path)
@@ -151,7 +151,7 @@ func TestGetConfigPath(t *testing.T) {
 func TestLoadOrCreate_Create(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	configDir := filepath.Join(tmpDir, ".config", "filesync")
+	configDir := filepath.Join(tmpDir, ".config", "axion")
 	configPath := filepath.Join(configDir, "config.json")
 
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
@@ -181,7 +181,7 @@ func TestLoadOrCreate_Create(t *testing.T) {
 
 func TestLoadOrCreate_Load(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, ".config", "filesync", "config.json")
+	configPath := filepath.Join(tmpDir, ".config", "axion", "config.json")
 
 	initialCfg := &Config{
 		SyncPath:   "/existing/path",

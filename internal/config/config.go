@@ -60,7 +60,7 @@ func (c *Config) Save(path string) error {
 
 func GetConfigPath() string {
 	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, ".config", "filesync", "config.json")
+	return filepath.Join(homeDir, ".config", "axion", "config.json")
 }
 
 func LoadOrCreate() (*Config, error) {

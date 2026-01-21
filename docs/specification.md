@@ -145,7 +145,7 @@ flowchart TD
 
 ### 4.1 設定ファイル
 
-パス: `~/.config/filesync/config.json`
+パス: `~/.config/axion/config.json`
 
 ```json
 {
@@ -190,7 +190,7 @@ Options:
 axion -init
 
 # 設定ファイルを編集してWindowsのIPを追加
-# ~/.config/filesync/config.json
+# ~/.config/axion/config.json
 ```
 
 #### Windows側
@@ -200,7 +200,7 @@ axion -init
 axion.exe -init
 
 # 設定ファイルを編集してmacOSのIPを追加
-# %USERPROFILE%\.config\filesync\config.json
+# %USERPROFILE%\.config\axion\config.json
 ```
 
 ### 5.2 起動
@@ -270,10 +270,10 @@ axion -path /path/to/sync -peers 192.168.1.10:8765
 
 ```bash
 # macOS
-go build -o bin/axion ./cmd/filesync
+go build -o bin/axion ./cmd/axion
 
 # Windows (クロスコンパイル)
-GOOS=windows GOARCH=amd64 go build -o bin/axion.exe ./cmd/filesync
+GOOS=windows GOARCH=amd64 go build -o bin/axion.exe ./cmd/axion
 ```
 
 ## 10. 今後の拡張予定
