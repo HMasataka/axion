@@ -129,3 +129,10 @@ func (s *Server) Broadcast(msg *protocol.Message) {
 		}
 	}
 }
+
+func (s *Server) GetListenAddr() string {
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
+	return s.addr
+}
