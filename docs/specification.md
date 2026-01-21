@@ -105,10 +105,10 @@ flowchart TD
 
 #### メッセージ形式
 
-```mermaid
-packet-beta
-  0-31: "Length (4 bytes, Big Endian)"
-  32-95: "JSON Payload (variable length)"
+```
++-----------------------------------+-----------------------------------+
+|  Length (4 bytes, Big Endian)     |  JSON Payload (variable length)   |
++-----------------------------------+-----------------------------------+
 ```
 
 ```json
