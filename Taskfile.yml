@@ -1,0 +1,113 @@
+version: "3"
+
+vars:
+  BINARY_NAME: filesync
+  BUILD_DIR: bin
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the application
+    cmds:
+      - go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ./cmd/filesync
+
+  run:
+    desc: Run the application
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CLI_ARGS}}
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  test:coverage:
+    desc: Run tests with coverage
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+
+  lint:
+    desc: Run linter
+    cmds:
+      - golangci-lint run ./...
+
+  fmt:
+    desc: Format code
+    cmds:
+      - go fmt ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  tidy:
+    desc: Tidy go modules
+    cmds:
+      - go mod tidy
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - rm -f coverage.out coverage.html
+
+  install:
+    desc: Install the binary
+    cmds:
+      - go install ./cmd/filesync
+
+  all:
+    desc: Run fmt, vet, lint, test, and build
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test
+      - task: build
+
+  build:linux:amd64:
+    desc: Build for Linux (amd64)
+    cmds:
+      - GOOS=linux GOARCH=amd64 go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-amd64 ./cmd/filesync
+
+  build:linux:arm64:
+    desc: Build for Linux (arm64)
+    cmds:
+      - GOOS=linux GOARCH=arm64 go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-arm64 ./cmd/filesync
+
+  build:darwin:amd64:
+    desc: Build for macOS (amd64)
+    cmds:
+      - GOOS=darwin GOARCH=amd64 go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-amd64 ./cmd/filesync
+
+  build:darwin:arm64:
+    desc: Build for macOS (arm64)
+    cmds:
+      - GOOS=darwin GOARCH=arm64 go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-arm64 ./cmd/filesync
+
+  build:windows:amd64:
+    desc: Build for Windows (amd64)
+    cmds:
+      - GOOS=windows GOARCH=amd64 go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-windows-amd64.exe ./cmd/filesync
+
+  build:windows:arm64:
+    desc: Build for Windows (arm64)
+    cmds:
+      - GOOS=windows GOARCH=arm64 go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-windows-arm64.exe ./cmd/filesync
+
+  build:all:
+    desc: Build for all platforms
+    cmds:
+      - task: build:linux:amd64
+      - task: build:linux:arm64
+      - task: build:darwin:amd64
+      - task: build:darwin:arm64
+      - task: build:windows:amd64
+      - task: build:windows:arm64
