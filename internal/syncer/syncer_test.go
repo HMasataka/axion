@@ -395,13 +395,20 @@ func TestSyncerHandleFileChange_SameHash(t *testing.T) {
 func TestSyncerHandleSyncRequest(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	os.WriteFile(filepath.Join(tmpDir, "local.txt"), []byte("local content"), 0644)
+	localContent := []byte("local content")
+	localFile := filepath.Join(tmpDir, "local.txt")
+	os.WriteFile(localFile, localContent, 0644)
 
 	s, err := New(tmpDir, ":0", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to create syncer: %v", err)
 	}
 	defer s.Stop()
+
+	// Verify local file exists before sync request
+	if _, err := os.Stat(localFile); os.IsNotExist(err) {
+		t.Fatal("local file should exist before sync request")
+	}
 
 	payload := &protocol.SyncRequestPayload{
 		Files: []protocol.FileInfo{
@@ -415,14 +422,29 @@ func TestSyncerHandleSyncRequest(t *testing.T) {
 		},
 	}
 
-	data, _ := json.Marshal(payload)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal payload: %v", err)
+	}
+
 	s.handleSyncRequest(data)
+
+	// Verify local file is unchanged after sync request
+	content, err := os.ReadFile(localFile)
+	if err != nil {
+		t.Fatalf("failed to read local file: %v", err)
+	}
+	if string(content) != string(localContent) {
+		t.Error("local file should be unchanged after sync request")
+	}
 }
 
 func TestSyncerHandleSyncResponse(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	os.WriteFile(filepath.Join(tmpDir, "needed.txt"), []byte("needed content"), 0644)
+	neededContent := []byte("needed content")
+	neededFile := filepath.Join(tmpDir, "needed.txt")
+	os.WriteFile(neededFile, neededContent, 0644)
 
 	s, err := New(tmpDir, ":0", nil, nil)
 	if err != nil {
@@ -430,13 +452,31 @@ func TestSyncerHandleSyncResponse(t *testing.T) {
 	}
 	defer s.Stop()
 
+	// Verify file exists before sync response
+	if _, err := os.Stat(neededFile); os.IsNotExist(err) {
+		t.Fatal("needed file should exist before sync response")
+	}
+
 	payload := &protocol.SyncResponsePayload{
 		NeedFiles:   []string{"needed.txt"},
 		DeleteFiles: []string{},
 	}
 
-	data, _ := json.Marshal(payload)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal payload: %v", err)
+	}
+
 	s.handleSyncResponse(data)
+
+	// Verify file still exists after sync response (should not be deleted)
+	content, err := os.ReadFile(neededFile)
+	if err != nil {
+		t.Fatalf("needed file should still exist after sync response: %v", err)
+	}
+	if string(content) != string(neededContent) {
+		t.Error("needed file content should be unchanged")
+	}
 }
 
 func TestSyncerSyncingFilesFlag(t *testing.T) {
@@ -465,8 +505,9 @@ func TestSyncerSyncingFilesFlag(t *testing.T) {
 func TestSyncerHandleFileRequest(t *testing.T) {
 	tmpDir := t.TempDir()
 
+	requestedContent := []byte("requested content")
 	testFile := filepath.Join(tmpDir, "requested.txt")
-	os.WriteFile(testFile, []byte("requested content"), 0644)
+	os.WriteFile(testFile, requestedContent, 0644)
 
 	s, err := New(tmpDir, ":0", nil, nil)
 	if err != nil {
@@ -474,12 +515,34 @@ func TestSyncerHandleFileRequest(t *testing.T) {
 	}
 	defer s.Stop()
 
+	// Verify file exists before request
+	info, err := os.Stat(testFile)
+	if err != nil {
+		t.Fatalf("test file should exist: %v", err)
+	}
+	if info.Size() != int64(len(requestedContent)) {
+		t.Errorf("file size mismatch: expected %d, got %d", len(requestedContent), info.Size())
+	}
+
 	payload := &protocol.FileRequestPayload{
 		RelativePath: "requested.txt",
 	}
 
-	data, _ := json.Marshal(payload)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal payload: %v", err)
+	}
+
 	s.handleFileRequest(data)
+
+	// Verify file still exists and unchanged after request
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("file should still exist after request: %v", err)
+	}
+	if string(content) != string(requestedContent) {
+		t.Error("file content should be unchanged after request")
+	}
 }
 
 func TestSyncerHandleFileRequest_NotExist(t *testing.T) {

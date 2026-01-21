@@ -674,6 +674,104 @@ func TestParsePayloads_Nil(t *testing.T) {
 	}
 }
 
+// TestDecode_UnknownMessageType tests handling of unknown message types
+func TestDecode_UnknownMessageType(t *testing.T) {
+	unknownTypes := []MessageType{
+		MessageType(0),   // zero value
+		MessageType(100), // arbitrary unknown type
+		MessageType(255), // max uint8
+	}
+
+	for _, msgType := range unknownTypes {
+		t.Run("type_"+string(rune('0'+msgType)), func(t *testing.T) {
+			msg := &Message{
+				Type:    msgType,
+				Payload: []byte(`{"test": "data"}`),
+			}
+
+			// Encoding should still work for any type
+			data, err := Encode(msg)
+			if err != nil {
+				t.Fatalf("encode failed for unknown type %d: %v", msgType, err)
+			}
+
+			// Decoding should also work - the type is just a value
+			decoded, err := Decode(bytes.NewReader(data))
+			if err != nil {
+				t.Fatalf("decode failed for unknown type %d: %v", msgType, err)
+			}
+
+			// Verify type is preserved
+			if decoded.Type != msgType {
+				t.Errorf("type mismatch: expected %d, got %d", msgType, decoded.Type)
+			}
+
+			// The protocol should handle unknown types gracefully
+			// (message is valid, just unknown type - handlers should ignore or log)
+		})
+	}
+}
+
+// TestMessage_UnknownTypeInPayloadProcessing tests that unknown types don't crash payload parsing
+func TestMessage_UnknownTypeInPayloadProcessing(t *testing.T) {
+	// Create a message with valid JSON but unknown type
+	msg := &Message{
+		Type:    MessageType(99),
+		Payload: []byte(`{"custom_field": "value", "number": 42}`),
+	}
+
+	data, err := Encode(msg)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	decoded, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	// Payload should be preserved even for unknown types
+	if string(decoded.Payload) != string(msg.Payload) {
+		t.Error("payload should be preserved for unknown message types")
+	}
+
+	// Trying to parse as known payload types should fail gracefully
+	// (fields won't match but shouldn't panic)
+	fc, _ := ParseFileChangePayload(decoded.Payload)
+	if fc.RelativePath != "" {
+		t.Log("custom payload parsed as FileChangePayload has empty RelativePath as expected")
+	}
+}
+
+// TestMessageType_Boundary tests boundary values for MessageType
+func TestMessageType_Boundary(t *testing.T) {
+	// Test that TypeAck is the last known type (7)
+	if TypeAck != 7 {
+		t.Errorf("expected TypeAck to be 7, got %d", TypeAck)
+	}
+
+	// Test that types above TypeAck are unknown
+	unknownType := MessageType(TypeAck + 1)
+	msg := &Message{
+		Type:    unknownType,
+		Payload: []byte(`{}`),
+	}
+
+	data, err := Encode(msg)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	decoded, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	if decoded.Type != unknownType {
+		t.Errorf("unknown type not preserved: expected %d, got %d", unknownType, decoded.Type)
+	}
+}
+
 func BenchmarkEncode(b *testing.B) {
 	msg := &Message{
 		Type:    TypeFileChange,

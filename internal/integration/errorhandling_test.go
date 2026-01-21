@@ -43,26 +43,19 @@ func TestError_ConfigNotFound(t *testing.T) {
 func TestError_WatcherInvalidPath(t *testing.T) {
 	nonexistentPath := "/nonexistent/path/that/does/not/exist"
 
-	// Test 1: watcher.New may or may not validate path existence
+	// watcher.New may or may not validate path existence
 	w, err := watcher.New(nonexistentPath, nil)
 	if err != nil {
 		// Expected: New validates path and returns error
-		if !os.IsNotExist(err) {
-			t.Logf("watcher.New returned non-IsNotExist error: %v", err)
-		}
+		// This is the correct behavior - path validation at creation time
 		return
 	}
 	defer w.Stop()
 
-	// Test 2: If New succeeded, Start should fail for nonexistent path
+	// If New succeeded, Start MUST fail for nonexistent path
 	err = w.Start()
-	if err != nil {
-		// Expected: Start fails for nonexistent path
-		t.Logf("watcher.Start correctly failed for nonexistent path: %v", err)
-	} else {
-		// If Start also succeeded, verify behavior by checking watcher state
-		// This may be valid if implementation creates directories or tolerates missing paths
-		t.Log("watcher tolerated nonexistent path - checking internal consistency")
+	if err == nil {
+		t.Error("watcher.Start should fail for nonexistent path")
 	}
 }
 
@@ -177,13 +170,14 @@ func TestError_InvalidMessagePayload(t *testing.T) {
 // TestError_ProtocolDecodeInvalidData tests protocol decode with invalid data
 func TestError_ProtocolDecodeInvalidData(t *testing.T) {
 	testCases := []struct {
-		name string
-		data []byte
+		name        string
+		data        []byte
+		expectError bool
 	}{
-		{"empty_data", []byte{}},
-		{"incomplete_header", []byte{0x00, 0x00, 0x00}},
-		{"zero_length", []byte{0x00, 0x00, 0x00, 0x00}},
-		{"truncated_payload", []byte{0x00, 0x00, 0x00, 0x10, 0x01}}, // claims 16 bytes but only has 1
+		{"empty_data", []byte{}, true},
+		{"incomplete_header", []byte{0x00, 0x00, 0x00}, true},
+		{"zero_length", []byte{0x00, 0x00, 0x00, 0x00}, true},
+		{"truncated_payload", []byte{0x00, 0x00, 0x00, 0x10, 0x01}, true}, // claims 16 bytes but only has 1
 	}
 
 	for _, tc := range testCases {
@@ -201,11 +195,9 @@ func TestError_ProtocolDecodeInvalidData(t *testing.T) {
 			_, decodeErr := protocol.Decode(r)
 			r.Close()
 
-			// Protocol decode should either return an error or handle gracefully
-			// Empty data or incomplete data should result in EOF or similar error
-			if decodeErr == nil && len(tc.data) < 5 {
-				// Very short data should cause decode error
-				t.Logf("decoder accepted very short data (%d bytes) - may be implementation-specific", len(tc.data))
+			// Invalid/incomplete data MUST result in an error
+			if tc.expectError && decodeErr == nil {
+				t.Errorf("expected error for %s, got nil", tc.name)
 			}
 		})
 	}
@@ -215,26 +207,20 @@ func TestError_ProtocolDecodeInvalidData(t *testing.T) {
 func TestError_SyncerStartWithInvalidPath(t *testing.T) {
 	nonexistentPath := "/nonexistent/syncer/path"
 
-	// Test: syncer.New should validate path existence
+	// syncer.New may or may not validate path existence
 	s, err := syncer.New(nonexistentPath, ":0", nil, nil)
 	if err != nil {
 		// Expected: syncer.New validates path and returns error
-		// Check if it's a path-related error
-		t.Logf("syncer.New correctly returned error for nonexistent path: %v", err)
+		// This is the correct behavior - path validation at creation time
 		return
 	}
 
-	// If New succeeded, Start should fail for nonexistent path
+	// If New succeeded, Start MUST fail for nonexistent path
 	err = s.Start()
-	if err != nil {
-		// Expected: Start fails for nonexistent path
-		t.Logf("syncer.Start correctly failed for nonexistent path: %v", err)
-		return
+	if err == nil {
+		s.Stop()
+		t.Error("syncer.Start should fail for nonexistent path")
 	}
-
-	// If both succeeded, clean up and note behavior
-	s.Stop()
-	t.Log("syncer tolerated nonexistent path - implementation creates or ignores missing paths")
 }
 
 // TestError_FileReadNonexistent tests reading a nonexistent file

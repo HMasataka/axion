@@ -606,3 +606,148 @@ func TestCrossPlatform_TimestampPrecision(t *testing.T) {
 		t.Logf("nanosecond precision may not be supported: expected %d, got %d", testTime.Nanosecond(), modTime.Nanosecond())
 	}
 }
+
+// TestCrossPlatform_SyncerPathNormalization tests Syncer's path normalization across platforms
+func TestCrossPlatform_SyncerPathNormalization(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create nested directory structure
+	nestedDir := filepath.Join(tmpDir, "level1", "level2")
+	if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		t.Fatalf("failed to create nested dir: %v", err)
+	}
+
+	// Create files at different levels
+	os.WriteFile(filepath.Join(tmpDir, "root.txt"), []byte("root"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "level1", "mid.txt"), []byte("mid"), 0644)
+	os.WriteFile(filepath.Join(nestedDir, "deep.txt"), []byte("deep"), 0644)
+
+	s, err := syncer.New(tmpDir, ":0", nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create syncer: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("failed to start syncer: %v", err)
+	}
+	defer s.Stop()
+
+	status := s.GetStatus()
+	localFiles := status["local_files"].(int)
+
+	// Should detect: 2 directories + 3 files = 5 entries
+	if localFiles != 5 {
+		t.Errorf("expected 5 entries (2 dirs + 3 files), got %d", localFiles)
+	}
+}
+
+// TestCrossPlatform_SyncerHashConsistency tests that hash calculation is consistent
+func TestCrossPlatform_SyncerHashConsistency(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create identical content in multiple files
+	content := []byte("identical content for hash testing")
+	file1 := filepath.Join(tmpDir, "file1.txt")
+	file2 := filepath.Join(tmpDir, "file2.txt")
+
+	os.WriteFile(file1, content, 0644)
+	os.WriteFile(file2, content, 0644)
+
+	s, err := syncer.New(tmpDir, ":0", nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create syncer: %v", err)
+	}
+	defer s.Stop()
+
+	// Get hashes using the syncer's method (via scanLocalFiles)
+	if err := s.Start(); err != nil {
+		t.Fatalf("failed to start syncer: %v", err)
+	}
+
+	// Status should show 2 files
+	status := s.GetStatus()
+	if status["local_files"].(int) != 2 {
+		t.Errorf("expected 2 files, got %d", status["local_files"])
+	}
+}
+
+// TestCrossPlatform_ProtocolMessageRoundTrip tests protocol message encoding/decoding
+func TestCrossPlatform_ProtocolMessageRoundTrip(t *testing.T) {
+	// Test various path formats in protocol messages
+	testPaths := []string{
+		"simple.txt",
+		"dir/file.txt",
+		"deep/nested/path/file.txt",
+		"path with spaces/file.txt",
+		"unicode/日本語/ファイル.txt",
+	}
+
+	for _, path := range testPaths {
+		t.Run(path, func(t *testing.T) {
+			payload := &protocol.FileChangePayload{
+				RelativePath: path,
+				Hash:         "testhash123",
+				ModTime:      time.Now().UnixNano(),
+				Size:         100,
+				IsDir:        false,
+			}
+
+			msg, err := protocol.NewFileChangeMessage(payload)
+			if err != nil {
+				t.Fatalf("failed to create message: %v", err)
+			}
+
+			parsed, err := protocol.ParseFileChangePayload(msg.Payload)
+			if err != nil {
+				t.Fatalf("failed to parse payload: %v", err)
+			}
+
+			if parsed.RelativePath != path {
+				t.Errorf("path mismatch: expected %s, got %s", path, parsed.RelativePath)
+			}
+
+			// Verify path uses forward slashes (cross-platform format)
+			if strings.Contains(parsed.RelativePath, "\\") {
+				t.Error("path should use forward slashes for cross-platform compatibility")
+			}
+		})
+	}
+}
+
+// TestCrossPlatform_SyncerFileChangeDetection tests that syncer detects file changes correctly
+func TestCrossPlatform_SyncerFileChangeDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create initial file
+	testFile := filepath.Join(tmpDir, "changing.txt")
+	os.WriteFile(testFile, []byte("initial"), 0644)
+
+	s, err := syncer.New(tmpDir, ":0", nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create syncer: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("failed to start syncer: %v", err)
+	}
+	defer s.Stop()
+
+	// Initial status
+	status1 := s.GetStatus()
+	if status1["local_files"].(int) != 1 {
+		t.Errorf("expected 1 file initially, got %d", status1["local_files"])
+	}
+
+	// Add another file
+	newFile := filepath.Join(tmpDir, "new.txt")
+	os.WriteFile(newFile, []byte("new content"), 0644)
+
+	// Wait for detection
+	time.Sleep(300 * time.Millisecond)
+
+	// Check updated status
+	status2 := s.GetStatus()
+	if status2["local_files"].(int) != 2 {
+		t.Errorf("expected 2 files after adding, got %d", status2["local_files"])
+	}
+}

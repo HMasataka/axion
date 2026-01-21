@@ -56,18 +56,25 @@ func TestWatcherEvents_Create(t *testing.T) {
 		os.WriteFile(testFile, []byte("hello"), 0644)
 	}()
 
-	select {
-	case event := <-w.Events():
-		if event.Op != OpCreate && event.Op != OpWrite {
-			t.Errorf("expected Create or Write event, got %v", event.Op)
+	// Wait for at least one relevant event (may receive multiple events)
+	timeout := time.After(2 * time.Second)
+	foundEvent := false
+
+	for !foundEvent {
+		select {
+		case event := <-w.Events():
+			if event.RelativePath == "test.txt" && (event.Op == OpCreate || event.Op == OpWrite) {
+				foundEvent = true
+			}
+		case err := <-w.Errors():
+			t.Fatalf("watcher error: %v", err)
+		case <-timeout:
+			t.Fatal("timeout waiting for create event")
 		}
-		if event.RelativePath != "test.txt" {
-			t.Errorf("expected relative path test.txt, got %s", event.RelativePath)
-		}
-	case err := <-w.Errors():
-		t.Fatalf("watcher error: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for create event")
+	}
+
+	if !foundEvent {
+		t.Error("expected to find create/write event for test.txt")
 	}
 }
 
@@ -92,15 +99,25 @@ func TestWatcherEvents_Write(t *testing.T) {
 		os.WriteFile(testFile, []byte("updated content"), 0644)
 	}()
 
-	select {
-	case event := <-w.Events():
-		if event.Op != OpWrite {
-			t.Errorf("expected Write event, got %v", event.Op)
+	// Wait for at least one write event (may receive multiple events)
+	timeout := time.After(2 * time.Second)
+	foundEvent := false
+
+	for !foundEvent {
+		select {
+		case event := <-w.Events():
+			if event.RelativePath == "existing.txt" && event.Op == OpWrite {
+				foundEvent = true
+			}
+		case err := <-w.Errors():
+			t.Fatalf("watcher error: %v", err)
+		case <-timeout:
+			t.Fatal("timeout waiting for write event")
 		}
-	case err := <-w.Errors():
-		t.Fatalf("watcher error: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for write event")
+	}
+
+	if !foundEvent {
+		t.Error("expected to find write event for existing.txt")
 	}
 }
 
