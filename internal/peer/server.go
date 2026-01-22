@@ -1,7 +1,7 @@
 package peer
 
 import (
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 
@@ -36,7 +36,7 @@ func (s *Server) Start() error {
 	}
 
 	s.listener = listener
-	log.Printf("Server listening on %s", s.addr)
+	slog.Info("Server listening", "addr", s.addr)
 
 	go s.acceptLoop()
 
@@ -76,7 +76,7 @@ func (s *Server) acceptLoop() {
 			case <-s.done:
 				return
 			default:
-				log.Printf("Error accepting connection: %v", err)
+				slog.Error("Error accepting connection", "error", err)
 				continue
 			}
 		}
@@ -88,7 +88,7 @@ func (s *Server) acceptLoop() {
 		s.peers[addr] = peer
 		s.mu.Unlock()
 
-		log.Printf("New peer connected: %s", addr)
+		slog.Info("New peer connected", "addr", addr)
 
 		if s.onPeer != nil {
 			s.onPeer(peer)

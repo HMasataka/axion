@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -92,7 +92,7 @@ func (s *Syncer) watchEvents() {
 		case event := <-s.watcher.Events():
 			s.handleLocalChange(event)
 		case err := <-s.watcher.Errors():
-			log.Printf("Watcher error: %v", err)
+			slog.Error("Watcher error", "error", err)
 		}
 	}
 }
@@ -102,7 +102,7 @@ func (s *Syncer) handleLocalChange(event watcher.Event) {
 		return
 	}
 
-	log.Printf("Local change detected: %s (%v)", event.RelativePath, event.Op)
+	slog.Info("Local change detected", "path", event.RelativePath, "op", event.Op)
 
 	switch event.Op {
 	case watcher.OpCreate, watcher.OpWrite:
@@ -146,7 +146,7 @@ func (s *Syncer) handleMessage(msg *protocol.Message) {
 func (s *Syncer) handleFileChange(data []byte) {
 	payload, err := protocol.ParseFileChangePayload(data)
 	if err != nil {
-		log.Printf("Error parsing file change payload: %v", err)
+		slog.Error("Error parsing file change payload", "error", err)
 		return
 	}
 
@@ -168,12 +168,12 @@ func (s *Syncer) handleFileChange(data []byte) {
 	if err == nil {
 		localModTime := localInfo.ModTime().UnixNano()
 		if localModTime > payload.ModTime {
-			log.Printf("Local file %s is newer, skipping remote change", payload.RelativePath)
+			slog.Info("Local file is newer, skipping remote change", "path", payload.RelativePath)
 			return
 		}
 	}
 
-	log.Printf("Requesting file: %s", payload.RelativePath)
+	slog.Info("Requesting file", "path", payload.RelativePath)
 	reqPayload := &protocol.FileRequestPayload{RelativePath: payload.RelativePath}
 	msg, _ := protocol.NewFileRequestMessage(reqPayload)
 	s.broadcast(msg)
@@ -182,7 +182,7 @@ func (s *Syncer) handleFileChange(data []byte) {
 func (s *Syncer) handleFileRequest(data []byte) {
 	payload, err := protocol.ParseFileRequestPayload(data)
 	if err != nil {
-		log.Printf("Error parsing file request payload: %v", err)
+		slog.Error("Error parsing file request payload", "error", err)
 		return
 	}
 
@@ -190,7 +190,7 @@ func (s *Syncer) handleFileRequest(data []byte) {
 
 	fileData, err := os.ReadFile(localPath)
 	if err != nil {
-		log.Printf("Error reading file %s: %v", localPath, err)
+		slog.Error("Error reading file", "path", localPath, "error", err)
 		return
 	}
 
@@ -199,7 +199,7 @@ func (s *Syncer) handleFileRequest(data []byte) {
 		return
 	}
 
-	log.Printf("Sending file: %s", payload.RelativePath)
+	slog.Info("Sending file", "path", payload.RelativePath)
 	respPayload := &protocol.FileDataPayload{
 		RelativePath: payload.RelativePath,
 		Data:         fileData,
@@ -212,7 +212,7 @@ func (s *Syncer) handleFileRequest(data []byte) {
 func (s *Syncer) handleFileData(data []byte) {
 	payload, err := protocol.ParseFileDataPayload(data)
 	if err != nil {
-		log.Printf("Error parsing file data payload: %v", err)
+		slog.Error("Error parsing file data payload", "error", err)
 		return
 	}
 
@@ -223,12 +223,12 @@ func (s *Syncer) handleFileData(data []byte) {
 
 	dir := filepath.Dir(localPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Printf("Error creating directory %s: %v", dir, err)
+		slog.Error("Error creating directory", "path", dir, "error", err)
 		return
 	}
 
 	if err := os.WriteFile(localPath, payload.Data, 0644); err != nil {
-		log.Printf("Error writing file %s: %v", localPath, err)
+		slog.Error("Error writing file", "path", localPath, "error", err)
 		return
 	}
 
@@ -238,13 +238,13 @@ func (s *Syncer) handleFileData(data []byte) {
 	hash := sha256.Sum256(payload.Data)
 	s.watcher.SetFileHash(payload.RelativePath, hex.EncodeToString(hash[:]))
 
-	log.Printf("File synced: %s", payload.RelativePath)
+	slog.Info("File synced", "path", payload.RelativePath)
 }
 
 func (s *Syncer) handleFileDelete(data []byte) {
 	payload, err := protocol.ParseFileDeletePayload(data)
 	if err != nil {
-		log.Printf("Error parsing file delete payload: %v", err)
+		slog.Error("Error parsing file delete payload", "error", err)
 		return
 	}
 
@@ -259,13 +259,13 @@ func (s *Syncer) handleFileDelete(data []byte) {
 		os.Remove(localPath)
 	}
 
-	log.Printf("File deleted: %s", payload.RelativePath)
+	slog.Info("File deleted", "path", payload.RelativePath)
 }
 
 func (s *Syncer) handleSyncRequest(data []byte) {
 	payload, err := protocol.ParseSyncRequestPayload(data)
 	if err != nil {
-		log.Printf("Error parsing sync request payload: %v", err)
+		slog.Error("Error parsing sync request payload", "error", err)
 		return
 	}
 
@@ -309,7 +309,7 @@ func (s *Syncer) handleSyncRequest(data []byte) {
 func (s *Syncer) handleSyncResponse(data []byte) {
 	payload, err := protocol.ParseSyncResponsePayload(data)
 	if err != nil {
-		log.Printf("Error parsing sync response payload: %v", err)
+		slog.Error("Error parsing sync response payload", "error", err)
 		return
 	}
 
@@ -325,7 +325,7 @@ func (s *Syncer) initialSync() {
 
 	files, err := s.scanLocalFiles()
 	if err != nil {
-		log.Printf("Error scanning local files: %v", err)
+		slog.Error("Error scanning local files", "error", err)
 		return
 	}
 
@@ -333,7 +333,7 @@ func (s *Syncer) initialSync() {
 	msg, _ := protocol.NewSyncRequestMessage(payload)
 	s.broadcast(msg)
 
-	log.Printf("Initial sync request sent with %d files", len(files))
+	slog.Info("Initial sync request sent", "file_count", len(files))
 }
 
 func (s *Syncer) scanLocalFiles() ([]protocol.FileInfo, error) {

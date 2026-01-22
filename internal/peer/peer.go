@@ -3,7 +3,7 @@ package peer
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -89,7 +89,7 @@ func (p *Peer) StartWithReconnect() {
 				return
 			default:
 				if err := p.Connect(); err != nil {
-					log.Printf("Failed to connect to %s: %v, retrying in 5s", p.addr, err)
+					slog.Warn("Failed to connect", "addr", p.addr, "error", err, "retry_in", "5s")
 					time.Sleep(5 * time.Second)
 					continue
 				}
@@ -100,7 +100,7 @@ func (p *Peer) StartWithReconnect() {
 					return
 				}
 
-				log.Printf("Disconnected from %s, reconnecting in 5s", p.addr)
+				slog.Info("Disconnected, reconnecting", "addr", p.addr, "retry_in", "5s")
 				time.Sleep(5 * time.Second)
 			}
 		}
@@ -199,7 +199,7 @@ func (p *Peer) readLoop() {
 		msg, err := protocol.Decode(conn)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Error reading from peer %s: %v", p.addr, err)
+				slog.Error("Error reading from peer", "addr", p.addr, "error", err)
 			}
 			return
 		}
@@ -234,12 +234,12 @@ func (p *Peer) writeLoop() {
 
 			data, err := protocol.Encode(msg)
 			if err != nil {
-				log.Printf("Error encoding message: %v", err)
+				slog.Error("Error encoding message", "error", err)
 				continue
 			}
 
 			if _, err := conn.Write(data); err != nil {
-				log.Printf("Error writing to peer %s: %v", p.addr, err)
+				slog.Error("Error writing to peer", "addr", p.addr, "error", err)
 				p.mu.Lock()
 				p.connected = false
 				p.mu.Unlock()

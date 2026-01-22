@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -33,7 +33,8 @@ func main() {
 
 		cfg := config.DefaultConfig()
 		if err := cfg.Save(path); err != nil {
-			log.Fatalf("Failed to create config: %v", err)
+			slog.Error("Failed to create config", "error", err)
+			os.Exit(1)
 		}
 		fmt.Printf("Config file created at: %s\n", path)
 		fmt.Println("Please edit the config file and set your peer addresses.")
@@ -46,12 +47,14 @@ func main() {
 	if *configPath != "" {
 		cfg, err = config.Load(*configPath)
 		if err != nil {
-			log.Fatalf("Failed to load config: %v", err)
+			slog.Error("Failed to load config", "error", err)
+			os.Exit(1)
 		}
 	} else {
 		cfg, err = config.LoadOrCreate()
 		if err != nil {
-			log.Fatalf("Failed to load config: %v", err)
+			slog.Error("Failed to load config", "error", err)
+			os.Exit(1)
 		}
 	}
 
@@ -66,11 +69,13 @@ func main() {
 	}
 
 	if cfg.SyncPath == "" {
-		log.Fatal("Sync path is required. Use -path flag or set in config file.")
+		slog.Error("Sync path is required. Use -path flag or set in config file.")
+		os.Exit(1)
 	}
 
 	if err := os.MkdirAll(cfg.SyncPath, 0755); err != nil {
-		log.Fatalf("Failed to create sync directory: %v", err)
+		slog.Error("Failed to create sync directory", "error", err)
+		os.Exit(1)
 	}
 
 	fmt.Println("=== File Sync ===")
@@ -82,7 +87,8 @@ func main() {
 
 	s, err := syncer.New(cfg.SyncPath, cfg.ListenAddr, cfg.PeerAddrs, cfg.IgnoreList)
 	if err != nil {
-		log.Fatalf("Failed to create syncer: %v", err)
+		slog.Error("Failed to create syncer", "error", err)
+		os.Exit(1)
 	}
 
 	if *showStatus {
@@ -91,7 +97,8 @@ func main() {
 	}
 
 	if err := s.Start(); err != nil {
-		log.Fatalf("Failed to start syncer: %v", err)
+		slog.Error("Failed to start syncer", "error", err)
+		os.Exit(1)
 	}
 
 	fmt.Println("Sync started. Press Ctrl+C to stop.")
