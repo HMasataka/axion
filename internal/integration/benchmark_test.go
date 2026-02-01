@@ -196,7 +196,7 @@ func BenchmarkConnection(b *testing.B) {
 func BenchmarkMessageSend(b *testing.B) {
 	server := peer.NewServer(":0")
 	server.SetPeerHandler(func(p *peer.Peer) {
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			// Discard received messages
 		})
 	})

@@ -61,7 +61,7 @@ func TestP2P_MessageExchange(t *testing.T) {
 	peerConnected := make(chan struct{}, 1)
 	receivedFromClient := make(chan *protocol.Message, 1)
 	server.SetPeerHandler(func(p *peer.Peer) {
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			receivedFromClient <- msg
 		})
 		peerConnected <- struct{}{}
@@ -118,7 +118,7 @@ func TestP2P_BidirectionalCommunication(t *testing.T) {
 
 	server.SetPeerHandler(func(p *peer.Peer) {
 		serverPeer = p
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			receivedFromClient <- msg
 		})
 		peerConnected <- struct{}{}
@@ -133,7 +133,7 @@ func TestP2P_BidirectionalCommunication(t *testing.T) {
 
 	receivedFromServer := make(chan *protocol.Message, 1)
 	client := peer.NewClient(addr)
-	client.SetMessageHandler(func(msg *protocol.Message) {
+	client.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 		receivedFromServer <- msg
 	})
 	defer client.Close()
@@ -257,7 +257,7 @@ func TestP2P_BroadcastToMultipleClients(t *testing.T) {
 		receivedChannels[i] = ch
 
 		client := peer.NewClient(addr)
-		client.SetMessageHandler(func(msg *protocol.Message) {
+		client.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			ch <- msg
 		})
 		if err := client.Connect(); err != nil {
@@ -656,7 +656,7 @@ func TestConflict_RemoteNewerWins(t *testing.T) {
 
 	// Set up message handler to capture file requests from syncer
 	fileRequestReceived := make(chan *protocol.Message, 1)
-	client.SetMessageHandler(func(msg *protocol.Message) {
+	client.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 		if msg.Type == protocol.TypeFileRequest {
 			fileRequestReceived <- msg
 		}
@@ -762,7 +762,7 @@ func TestSync_IgnorePatterns_NotPropagated(t *testing.T) {
 	peerConnected := make(chan struct{}, 1)
 
 	server.SetPeerHandler(func(p *peer.Peer) {
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			messagesReceived <- msg
 		})
 		peerConnected <- struct{}{}
@@ -955,7 +955,7 @@ func TestP2P_LargeMessage(t *testing.T) {
 
 	receivedChan := make(chan *protocol.Message, 1)
 	server.SetPeerHandler(func(p *peer.Peer) {
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			receivedChan <- msg
 		})
 	})
@@ -1286,7 +1286,7 @@ func TestConflict_HashMatch(t *testing.T) {
 
 	// Set up message handler to capture any file requests
 	fileRequestReceived := make(chan *protocol.Message, 1)
-	client.SetMessageHandler(func(msg *protocol.Message) {
+	client.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 		if msg.Type == protocol.TypeFileRequest {
 			fileRequestReceived <- msg
 		}
@@ -1433,7 +1433,7 @@ func TestSync_EndToEndFileDataTransfer(t *testing.T) {
 	peerConnected := make(chan struct{}, 1)
 
 	server.SetPeerHandler(func(p *peer.Peer) {
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			if msg.Type == protocol.TypeFileData {
 				fileDataReceived <- msg
 			}

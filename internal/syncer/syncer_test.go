@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/HMasataka/axion/internal/peer"
 	"github.com/HMasataka/axion/internal/protocol"
 )
 
@@ -427,7 +428,7 @@ func TestSyncerHandleSyncRequest(t *testing.T) {
 		t.Fatalf("failed to marshal payload: %v", err)
 	}
 
-	s.handleSyncRequest(data)
+	s.handleSyncRequest(data, peer.NewClient("dummy"))
 
 	// Verify local file is unchanged after sync request
 	content, err := os.ReadFile(localFile)
@@ -467,7 +468,7 @@ func TestSyncerHandleSyncResponse(t *testing.T) {
 		t.Fatalf("failed to marshal payload: %v", err)
 	}
 
-	s.handleSyncResponse(data)
+	s.handleSyncResponse(data, peer.NewClient("dummy"))
 
 	// Verify file still exists after sync response (should not be deleted)
 	content, err := os.ReadFile(neededFile)
@@ -533,7 +534,7 @@ func TestSyncerHandleFileRequest(t *testing.T) {
 		t.Fatalf("failed to marshal payload: %v", err)
 	}
 
-	s.handleFileRequest(data)
+	s.handleFileRequest(data, peer.NewClient("dummy"))
 
 	// Verify file still exists and unchanged after request
 	content, err := os.ReadFile(testFile)
@@ -559,7 +560,7 @@ func TestSyncerHandleFileRequest_NotExist(t *testing.T) {
 	}
 
 	data, _ := json.Marshal(payload)
-	s.handleFileRequest(data)
+	s.handleFileRequest(data, peer.NewClient("dummy"))
 }
 
 func TestSyncerHandleFileChange_LocalNewer(t *testing.T) {
@@ -755,7 +756,7 @@ func TestSyncerHandleFileRequest_InvalidPayload(t *testing.T) {
 	}
 	defer s.Stop()
 
-	s.handleFileRequest([]byte("invalid json"))
+	s.handleFileRequest([]byte("invalid json"), peer.NewClient("dummy"))
 }
 
 func TestSyncerHandleSyncRequest_InvalidPayload(t *testing.T) {
@@ -767,7 +768,7 @@ func TestSyncerHandleSyncRequest_InvalidPayload(t *testing.T) {
 	}
 	defer s.Stop()
 
-	s.handleSyncRequest([]byte("invalid json"))
+	s.handleSyncRequest([]byte("invalid json"), peer.NewClient("dummy"))
 }
 
 func TestSyncerHandleSyncResponse_InvalidPayload(t *testing.T) {
@@ -779,7 +780,7 @@ func TestSyncerHandleSyncResponse_InvalidPayload(t *testing.T) {
 	}
 	defer s.Stop()
 
-	s.handleSyncResponse([]byte("invalid json"))
+	s.handleSyncResponse([]byte("invalid json"), peer.NewClient("dummy"))
 }
 
 func TestSyncerHandleMessage(t *testing.T) {
@@ -825,7 +826,7 @@ func TestSyncerHandleMessage(t *testing.T) {
 				Type:    tc.msgType,
 				Payload: payloadData,
 			}
-			s.handleMessage(msg)
+			s.handleMessage(msg, peer.NewClient("dummy"))
 		})
 	}
 }
@@ -996,7 +997,7 @@ func TestSyncerHandleSyncRequest_WithAssertions(t *testing.T) {
 	}
 
 	data, _ := json.Marshal(payload)
-	s.handleSyncRequest(data)
+	s.handleSyncRequest(data, peer.NewClient("dummy"))
 
 	// Local file should still exist
 	if _, err := os.Stat(filepath.Join(tmpDir, "local.txt")); os.IsNotExist(err) {
@@ -1025,7 +1026,7 @@ func TestSyncerHandleSyncResponse_WithAssertions(t *testing.T) {
 	data, _ := json.Marshal(payload)
 
 	// Handle sync response - this should trigger file requests
-	s.handleSyncResponse(data)
+	s.handleSyncResponse(data, peer.NewClient("dummy"))
 
 	// Verify local file still exists
 	content, err := os.ReadFile(filepath.Join(tmpDir, "needed.txt"))

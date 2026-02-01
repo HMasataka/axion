@@ -238,8 +238,9 @@ func TestPeerAddr(t *testing.T) {
 func TestPeerSetMessageHandler(t *testing.T) {
 	p := NewClient("127.0.0.1:8765")
 
-	handler := func(msg *protocol.Message) {
+	handler := func(msg *protocol.Message, from *Peer) {
 		_ = msg
+		_ = from
 	}
 
 	p.SetMessageHandler(handler)
@@ -525,7 +526,7 @@ func TestPeerMessageHandler(t *testing.T) {
 	}()
 
 	p := NewClient(listener.Addr().String())
-	p.SetMessageHandler(func(msg *protocol.Message) {
+	p.SetMessageHandler(func(msg *protocol.Message, from *Peer) {
 		received <- msg
 	})
 	defer p.Close()
@@ -652,7 +653,7 @@ func TestPeerSend_WithAssertion(t *testing.T) {
 
 	receivedChan := make(chan *protocol.Message, 1)
 	server.SetPeerHandler(func(p *Peer) {
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *Peer) {
 			receivedChan <- msg
 		})
 	})
@@ -824,7 +825,7 @@ func TestServerBroadcast_WithAssertion(t *testing.T) {
 		receivedChannels[i] = ch
 
 		client := NewClient(addr)
-		client.SetMessageHandler(func(msg *protocol.Message) {
+		client.SetMessageHandler(func(msg *protocol.Message, from *Peer) {
 			ch <- msg
 		})
 

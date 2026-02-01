@@ -548,7 +548,7 @@ func TestError_NetworkInterruption(t *testing.T) {
 	// Track messages received
 	messageReceived := make(chan struct{}, 1)
 	server.SetPeerHandler(func(p *peer.Peer) {
-		p.SetMessageHandler(func(msg *protocol.Message) {
+		p.SetMessageHandler(func(msg *protocol.Message, from *peer.Peer) {
 			messageReceived <- struct{}{}
 		})
 	})

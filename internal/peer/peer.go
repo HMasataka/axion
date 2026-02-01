@@ -19,7 +19,7 @@ type Peer struct {
 	incoming   chan *protocol.Message
 	outgoing   chan *protocol.Message
 	done       chan struct{}
-	onMessage  func(*protocol.Message)
+	onMessage  func(*protocol.Message, *Peer)
 	reconnect  bool
 	isServer   bool
 }
@@ -48,7 +48,7 @@ func NewFromConn(conn net.Conn) *Peer {
 	}
 }
 
-func (p *Peer) SetMessageHandler(handler func(*protocol.Message)) {
+func (p *Peer) SetMessageHandler(handler func(*protocol.Message, *Peer)) {
 	p.onMessage = handler
 }
 
@@ -205,7 +205,7 @@ func (p *Peer) readLoop() {
 		}
 
 		if p.onMessage != nil {
-			p.onMessage(msg)
+			p.onMessage(msg, p)
 		}
 
 		select {

@@ -126,20 +126,20 @@ func (s *Syncer) handleLocalChange(event watcher.Event) {
 	}
 }
 
-func (s *Syncer) handleMessage(msg *protocol.Message) {
+func (s *Syncer) handleMessage(msg *protocol.Message, from *peer.Peer) {
 	switch msg.Type {
 	case protocol.TypeFileChange:
 		s.handleFileChange(msg.Payload)
 	case protocol.TypeFileRequest:
-		s.handleFileRequest(msg.Payload)
+		s.handleFileRequest(msg.Payload, from)
 	case protocol.TypeFileData:
 		s.handleFileData(msg.Payload)
 	case protocol.TypeFileDelete:
 		s.handleFileDelete(msg.Payload)
 	case protocol.TypeSyncRequest:
-		s.handleSyncRequest(msg.Payload)
+		s.handleSyncRequest(msg.Payload, from)
 	case protocol.TypeSyncResponse:
-		s.handleSyncResponse(msg.Payload)
+		s.handleSyncResponse(msg.Payload, from)
 	}
 }
 
@@ -179,7 +179,7 @@ func (s *Syncer) handleFileChange(data []byte) {
 	s.broadcast(msg)
 }
 
-func (s *Syncer) handleFileRequest(data []byte) {
+func (s *Syncer) handleFileRequest(data []byte, from *peer.Peer) {
 	payload, err := protocol.ParseFileRequestPayload(data)
 	if err != nil {
 		slog.Error("Error parsing file request payload", "error", err)
@@ -190,7 +190,6 @@ func (s *Syncer) handleFileRequest(data []byte) {
 
 	fileData, err := os.ReadFile(localPath)
 	if err != nil {
-		slog.Error("Error reading file", "path", localPath, "error", err)
 		return
 	}
 
@@ -206,7 +205,7 @@ func (s *Syncer) handleFileRequest(data []byte) {
 		ModTime:      info.ModTime().UnixNano(),
 	}
 	msg, _ := protocol.NewFileDataMessage(respPayload)
-	s.broadcast(msg)
+	from.Send(msg)
 }
 
 func (s *Syncer) handleFileData(data []byte) {
@@ -262,7 +261,7 @@ func (s *Syncer) handleFileDelete(data []byte) {
 	slog.Info("File deleted", "path", payload.RelativePath)
 }
 
-func (s *Syncer) handleSyncRequest(data []byte) {
+func (s *Syncer) handleSyncRequest(data []byte, from *peer.Peer) {
 	payload, err := protocol.ParseSyncRequestPayload(data)
 	if err != nil {
 		slog.Error("Error parsing sync request payload", "error", err)
@@ -303,10 +302,10 @@ func (s *Syncer) handleSyncRequest(data []byte) {
 		DeleteFiles: deleteFiles,
 	}
 	msg, _ := protocol.NewSyncResponseMessage(respPayload)
-	s.broadcast(msg)
+	from.Send(msg)
 }
 
-func (s *Syncer) handleSyncResponse(data []byte) {
+func (s *Syncer) handleSyncResponse(data []byte, from *peer.Peer) {
 	payload, err := protocol.ParseSyncResponsePayload(data)
 	if err != nil {
 		slog.Error("Error parsing sync response payload", "error", err)
@@ -316,7 +315,7 @@ func (s *Syncer) handleSyncResponse(data []byte) {
 	for _, path := range payload.NeedFiles {
 		reqPayload := &protocol.FileRequestPayload{RelativePath: path}
 		msg, _ := protocol.NewFileRequestMessage(reqPayload)
-		s.broadcast(msg)
+		from.Send(msg)
 	}
 }
 
