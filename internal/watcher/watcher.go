@@ -33,14 +33,16 @@ const (
 )
 
 type Watcher struct {
-	basePath   string
-	fsWatcher  *fsnotify.Watcher
-	events     chan Event
-	errors     chan error
-	done       chan struct{}
-	ignoreList []string
-	mu         sync.RWMutex
-	fileHashes map[string]string
+	basePath       string
+	fsWatcher      *fsnotify.Watcher
+	events         chan Event
+	errors         chan error
+	done           chan struct{}
+	ignoreList     []string
+	mu             sync.RWMutex
+	fileHashes     map[string]string
+	pendingDeletes map[string]*time.Timer
+	deleteMu       sync.Mutex
 }
 
 func New(basePath string, ignoreList []string) (*Watcher, error) {
@@ -50,13 +52,14 @@ func New(basePath string, ignoreList []string) (*Watcher, error) {
 	}
 
 	w := &Watcher{
-		basePath:   basePath,
-		fsWatcher:  fsWatcher,
-		events:     make(chan Event, 100),
-		errors:     make(chan error, 10),
-		done:       make(chan struct{}),
-		ignoreList: ignoreList,
-		fileHashes: make(map[string]string),
+		basePath:       basePath,
+		fsWatcher:      fsWatcher,
+		events:         make(chan Event, 100),
+		errors:         make(chan error, 10),
+		done:           make(chan struct{}),
+		ignoreList:     ignoreList,
+		fileHashes:     make(map[string]string),
+		pendingDeletes: make(map[string]*time.Timer),
 	}
 
 	return w, nil
@@ -165,6 +168,43 @@ func (w *Watcher) watchLoop() {
 	}
 }
 
+func (w *Watcher) cancelPendingDelete(relPath string) {
+	w.deleteMu.Lock()
+	defer w.deleteMu.Unlock()
+	if timer, exists := w.pendingDeletes[relPath]; exists {
+		timer.Stop()
+		delete(w.pendingDeletes, relPath)
+	}
+}
+
+func (w *Watcher) scheduleDelete(event Event, relPath string) {
+	w.deleteMu.Lock()
+	defer w.deleteMu.Unlock()
+
+	if timer, exists := w.pendingDeletes[relPath]; exists {
+		timer.Stop()
+	}
+
+	w.pendingDeletes[relPath] = time.AfterFunc(200*time.Millisecond, func() {
+		w.deleteMu.Lock()
+		delete(w.pendingDeletes, relPath)
+		w.deleteMu.Unlock()
+
+		if _, err := os.Stat(event.FullPath); err == nil {
+			return
+		}
+
+		w.mu.Lock()
+		delete(w.fileHashes, relPath)
+		w.mu.Unlock()
+
+		select {
+		case w.events <- event:
+		default:
+		}
+	})
+}
+
 func (w *Watcher) processEvent(fsEvent fsnotify.Event) {
 	relPath, err := filepath.Rel(w.basePath, fsEvent.Name)
 	if err != nil {
@@ -180,6 +220,7 @@ func (w *Watcher) processEvent(fsEvent fsnotify.Event) {
 
 	switch {
 	case fsEvent.Op&fsnotify.Create == fsnotify.Create:
+		w.cancelPendingDelete(relPath)
 		if statErr != nil {
 			return
 		}
@@ -199,6 +240,7 @@ func (w *Watcher) processEvent(fsEvent fsnotify.Event) {
 		}
 
 	case fsEvent.Op&fsnotify.Write == fsnotify.Write:
+		w.cancelPendingDelete(relPath)
 		if statErr != nil {
 			return
 		}
@@ -225,15 +267,13 @@ func (w *Watcher) processEvent(fsEvent fsnotify.Event) {
 
 	case fsEvent.Op&fsnotify.Remove == fsnotify.Remove:
 		event.Op = OpRemove
-		w.mu.Lock()
-		delete(w.fileHashes, relPath)
-		w.mu.Unlock()
+		w.scheduleDelete(event, relPath)
+		return
 
 	case fsEvent.Op&fsnotify.Rename == fsnotify.Rename:
 		event.Op = OpRename
-		w.mu.Lock()
-		delete(w.fileHashes, relPath)
-		w.mu.Unlock()
+		w.scheduleDelete(event, relPath)
+		return
 
 	default:
 		return
