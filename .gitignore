@@ -28,3 +28,7 @@ Thumbs.db
 
 # Local config
 *.local
+
+.belt/*
+!.belt/spec.md
+!.belt/roadmap.md
