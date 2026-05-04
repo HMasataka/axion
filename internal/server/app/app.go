@@ -8,14 +8,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/HMasataka/axion/internal/proto"
+	"github.com/HMasataka/axion/internal/server/blobstore"
 	"github.com/HMasataka/axion/internal/server/hub"
 	httpsrv "github.com/HMasataka/axion/internal/server/http"
 	"github.com/HMasataka/axion/internal/server/store"
 )
+
+const perClientQuotaBytes int64 = 10 * 1024 * 1024 * 1024 // 10GB (spec.md L62)
 
 // Config はサーバー起動に必要な設定。
 type Config struct {
@@ -61,6 +65,16 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	slog.InfoContext(ctx, "server starting", "bind", cfg.Bind, "settings_count", len(settings))
 
+	maxFileSize, err := parseInt64Setting(settings, "max_file_size_bytes", 1024*1024*1024)
+	if err != nil {
+		return err
+	}
+
+	bs, err := blobstore.New(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("init blobstore: %w", err)
+	}
+
 	h := hub.New(
 		hub.HandlerFunc(func(hctx context.Context, clientID string, env proto.Envelope) error {
 			slog.WarnContext(hctx, "unhandled message", "client_id", clientID, "type", env.Type)
@@ -74,11 +88,14 @@ func Run(ctx context.Context, cfg Config) error {
 	)
 
 	router := httpsrv.NewRouter(httpsrv.Config{
-		Store:         s,
-		Hub:           h,
-		PSK:           psk,
-		AdminUser:     cfg.AdminUser,
-		AdminPassword: cfg.AdminPassword,
+		Store:               s,
+		Hub:                 h,
+		BlobStore:           bs,
+		PSK:                 psk,
+		AdminUser:           cfg.AdminUser,
+		AdminPassword:       cfg.AdminPassword,
+		MaxFileSizeBytes:    maxFileSize,
+		PerClientQuotaBytes: perClientQuotaBytes,
 	})
 
 	srv := &http.Server{
@@ -123,4 +140,16 @@ func readPSK(path string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+func parseInt64Setting(settings map[string]string, key string, fallback int64) (int64, error) {
+	v, ok := settings[key]
+	if !ok {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid setting %s=%q: %w", key, v, err)
+	}
+	return n, nil
 }
