@@ -1,0 +1,33 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - forbidigo
+
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: '^os\.Open$'
+          msg: "use clientfs.Jail.Open instead of os.Open (axion v0.2 root jail policy)"
+        - pattern: '^os\.OpenFile$'
+          msg: "use clientfs.Jail.Create / clientfs.Jail.Open instead of os.OpenFile"
+        - pattern: '^os\.ReadFile$'
+          msg: "use clientfs.Jail.Open + io.ReadAll instead of os.ReadFile"
+        - pattern: '^os\.WriteFile$'
+          msg: "use clientfs.Jail.Create + Write instead of os.WriteFile"
+        - pattern: '^os\.Create$'
+          msg: "use clientfs.Jail.Create instead of os.Create"
+        - pattern: '^os\.Stat$'
+          msg: "use clientfs.Jail.Stat instead of os.Stat"
+
+  exclusions:
+    rules:
+      # clientfs is the only package allowed to call os file primitives directly
+      # (it implements the jail). Tests can use file primitives freely.
+      - path: 'internal/clientfs/'
+        linters:
+          - forbidigo
+      - path: '_test\.go'
+        linters:
+          - forbidigo
