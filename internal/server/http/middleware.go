@@ -2,6 +2,7 @@ package httpsrv
 
 import (
 	"bufio"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,6 +12,10 @@ import (
 	"github.com/HMasataka/axion/internal/proto"
 	"github.com/HMasataka/axion/internal/server/store"
 )
+
+type ctxKey int
+
+const ctxKeyClientID ctxKey = iota
 
 // responseWriter は http.ResponseWriter をラップしてステータスコードを記録する。
 // WebSocket upgrade のために http.Hijacker も委譲する。
@@ -91,4 +96,29 @@ func protoVersionCompatible(client, server string) bool {
 	cmajor := strings.SplitN(client, ".", 2)[0]
 	smajor := strings.SplitN(server, ".", 2)[0]
 	return cmajor == smajor && cmajor != ""
+}
+
+// AuthBearerWithClientID は Bearer PSK 検証に加えて、X-Axion-Client-ID ヘッダから
+// クライアント ID を取り出して context に詰める。
+func AuthBearerWithClientID(s store.Store, psk string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := extractBearer(r.Header.Get("Authorization"))
+		if token != psk {
+			_ = s.AppendAuditLog(r.Context(), store.AuditEntry{
+				TS:   time.Now(),
+				Kind: "psk_auth_failed",
+			})
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		clientID := r.Header.Get("X-Axion-Client-ID")
+		ctx := context.WithValue(r.Context(), ctxKeyClientID, clientID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// ClientIDFromContext は context から ClientID を取り出す。
+func ClientIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxKeyClientID).(string)
+	return v
 }
