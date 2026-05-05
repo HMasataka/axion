@@ -35,7 +35,7 @@ func newTestHub() *hub.Hub {
 		return nil
 	})
 	onDisc := func(_ context.Context, _ string) {}
-	return hub.New(handler, onDisc)
+	return hub.New(handler, nil, onDisc)
 }
 
 func startTestServer(t *testing.T, s store.Store, h *hub.Hub) *httptest.Server {

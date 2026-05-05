@@ -49,7 +49,7 @@ func TestConn_ReceivedMessageRoutesToHandler(t *testing.T) {
 	onDisc := OnDisconnect(func(_ context.Context, _ string) {
 		discCalled <- struct{}{}
 	})
-	h := New(handler, onDisc)
+	h := New(handler, nil, onDisc)
 
 	srv := wsTestServer(t, func(serverWS *websocket.Conn) {
 		c := NewConn("client-1", serverWS, h)
@@ -101,7 +101,7 @@ func TestConn_PongResponseExtendsConnection(t *testing.T) {
 		default:
 		}
 	})
-	h := New(noopHandler(), onDisc)
+	h := New(noopHandler(), nil, onDisc)
 
 	srv := wsTestServer(t, func(serverWS *websocket.Conn) {
 		c := NewConn("client-1", serverWS, h)
@@ -158,7 +158,7 @@ func TestConn_PongTimeout_Disconnects(t *testing.T) {
 		default:
 		}
 	})
-	h := New(noopHandler(), onDisc)
+	h := New(noopHandler(), nil, onDisc)
 
 	srv := wsTestServer(t, func(serverWS *websocket.Conn) {
 		c := NewConn("client-1", serverWS, h)
@@ -185,7 +185,7 @@ func TestConn_PongTimeout_Disconnects(t *testing.T) {
 
 func TestConn_RegisterReplacesPrevious(t *testing.T) {
 	// Given: 同 clientID で2回 Register する
-	h := New(noopHandler(), noopOnDisc())
+	h := New(noopHandler(), nil, noopOnDisc())
 
 	var (
 		connMu   sync.Mutex
