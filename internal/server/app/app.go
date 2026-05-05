@@ -14,8 +14,8 @@ import (
 
 	"github.com/HMasataka/axion/internal/proto"
 	"github.com/HMasataka/axion/internal/server/blobstore"
-	"github.com/HMasataka/axion/internal/server/hub"
 	httpsrv "github.com/HMasataka/axion/internal/server/http"
+	"github.com/HMasataka/axion/internal/server/hub"
 	"github.com/HMasataka/axion/internal/server/store"
 	"github.com/HMasataka/axion/internal/server/syncengine"
 	"github.com/HMasataka/axion/internal/server/web"
@@ -145,10 +145,14 @@ func Run(ctx context.Context, cfg Config) error {
 			}()
 		},
 		func(dctx context.Context, clientID string) {
-			if err := s.UpdateClientStatus(dctx, clientID, "offline", time.Now()); err != nil {
-				slog.ErrorContext(dctx, "update client status", "client_id", clientID, "error", err)
+			bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := s.UpdateClientStatus(bg, clientID, "offline", time.Now()); err != nil {
+				slog.ErrorContext(bg, "update client status", "client_id", clientID, "error", err)
 			}
-			if c, err := s.GetClient(dctx, clientID); err == nil && c != nil {
+
+			if c, err := s.GetClient(bg, clientID); err == nil && c != nil {
 				webSrv.NotifyClientChange(*c)
 			}
 		},
@@ -183,7 +187,7 @@ func Run(ctx context.Context, cfg Config) error {
 		onReady = func() { cfg.Hooks.OnReady(hctx) }
 	}
 
-	return runServer(ctx, srv, cfg.ShutdownGrace, onReady)
+	return runServer(ctx, srv, h, cfg.ShutdownGrace, onReady)
 }
 
 // hubSenderProxy は Hub が生成された後に差し込めるように engine の Sender を遅延バインドする。
@@ -199,7 +203,7 @@ func (p *hubSenderProxy) SendAndWait(ctx context.Context, clientID string, env p
 	return p.h.SendAndWait(ctx, clientID, env, timeout)
 }
 
-func runServer(ctx context.Context, srv *http.Server, grace time.Duration, onReady func()) error {
+func runServer(ctx context.Context, srv *http.Server, h *hub.Hub, grace time.Duration, onReady func()) error {
 	serveErr := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -224,6 +228,8 @@ func runServer(ctx context.Context, srv *http.Server, grace time.Duration, onRea
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
+
+	h.Close(grace)
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)
