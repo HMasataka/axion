@@ -3,12 +3,14 @@ package web
 import (
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	httpsrv "github.com/HMasataka/axion/internal/server/http"
 	"github.com/HMasataka/axion/internal/server/store"
@@ -83,6 +85,10 @@ func buildHandler(cfg Config, templates map[string]*template.Template) http.Hand
 	mux.HandleFunc("/clients/", func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/clients/")
 		parts := strings.SplitN(p, "/", 2)
+		if len(parts) == 1 && r.Method == http.MethodDelete {
+			handleClientDelete(cfg, w, r, parts[0])
+			return
+		}
 		if len(parts) != 2 {
 			http.NotFound(w, r)
 			return
@@ -231,6 +237,30 @@ func handleClientDisplayName(cfg Config, tmpl *template.Template, w http.Respons
 		return
 	}
 	render(w, tmpl, "client_row", toClientView(*c))
+}
+
+// handleClientDelete は offline クライアントを削除する。online は 409 で拒否。
+// 関連する sync_pairs は ON DELETE CASCADE で連動削除される。
+func handleClientDelete(cfg Config, w http.ResponseWriter, r *http.Request, id string) {
+	c, err := cfg.Store.GetClient(r.Context(), id)
+	if err != nil || c == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if c.Status == "online" {
+		http.Error(w, "cannot delete online client", http.StatusConflict)
+		return
+	}
+	if err := cfg.Store.DeleteClient(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	detail := fmt.Sprintf(`{"hostname":%q,"root_path":%q}`, c.Hostname, c.RootPath)
+	_ = cfg.Store.AppendAuditLog(r.Context(), store.AuditEntry{
+		TS: time.Now(), Kind: "client_delete",
+		ClientID: &id, Detail: &detail,
+	})
+	w.WriteHeader(http.StatusOK)
 }
 
 // toClientView は store.Client を表示用の ClientView に変換する。

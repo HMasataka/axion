@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} - axion</title>
+  {{if .CSRFToken}}<meta name="csrf-token" content="{{.CSRFToken}}">{{end}}
   <link rel="stylesheet" href="/static/pico.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/htmx-ws-ext.js" defer></script>
