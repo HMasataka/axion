@@ -123,7 +123,7 @@ func handlePairNewForm(w http.ResponseWriter, r *http.Request, cfg Config, tmpl 
 	csrf := httpsrv.CSRFTokenFromContext(r.Context())
 	data := pairEditData{
 		Action:    "new",
-		Pair:      PairView{CSRFToken: csrf},
+		Pair:      PairView{SyncPair: store.SyncPair{Enabled: true}, CSRFToken: csrf},
 		Clients:   clients,
 		CSRFToken: csrf,
 	}
