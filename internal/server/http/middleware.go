@@ -3,6 +3,9 @@ package httpsrv
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,6 +15,11 @@ import (
 	"github.com/HMasataka/axion/internal/proto"
 	"github.com/HMasataka/axion/internal/server/store"
 )
+
+const csrfCookieName = "axion_csrf"
+const csrfHeaderName = "X-CSRF-Token"
+const csrfFormField = "_csrf"
+const csrfTokenLen = 32 // bytes
 
 type ctxKey int
 
@@ -120,5 +128,91 @@ func AuthBearerWithClientID(s store.Store, psk string, next http.Handler) http.H
 // ClientIDFromContext は context から ClientID を取り出す。
 func ClientIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(ctxKeyClientID).(string)
+	return v
+}
+
+// BasicAuth は HTTP Basic 認証で Web UI を保護する。
+// adminUser/adminPassword が空の場合は middleware を bypass する。
+// これは開発環境での認証なし起動を明示的に許容する仕様であり、フォールバックではない。
+// 認証失敗で WWW-Authenticate ヘッダ + 401。
+func BasicAuth(adminUser, adminPassword string, next http.Handler) http.Handler {
+	if adminUser == "" || adminPassword == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="axion admin"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		userOK := subtle.ConstantTimeCompare([]byte(user), []byte(adminUser)) == 1
+		passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(adminPassword)) == 1
+		if !userOK || !passOK {
+			w.Header().Set("WWW-Authenticate", `Basic realm="axion admin"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type csrfCtxKey struct{}
+
+// CSRF は double-submit cookie 方式で CSRF を防御する。
+// GET/HEAD/OPTIONS は通過。POST/PUT/PATCH/DELETE は X-CSRF-Token ヘッダか
+// _csrf フォーム値が cookie と一致するか検証する。不一致は 403 Forbidden。
+func CSRF(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := readOrIssueToken(w, r)
+		ctx := context.WithValue(r.Context(), csrfCtxKey{}, token)
+		r = r.WithContext(ctx)
+
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		submitted := r.Header.Get(csrfHeaderName)
+		if submitted == "" {
+			if err := r.ParseForm(); err == nil {
+				submitted = r.PostFormValue(csrfFormField)
+			}
+		}
+		if submitted == "" || subtle.ConstantTimeCompare([]byte(submitted), []byte(token)) != 1 {
+			http.Error(w, "CSRF token mismatch", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// readOrIssueToken は cookie から CSRF トークンを取り出す。無ければ生成して set する。
+func readOrIssueToken(w http.ResponseWriter, r *http.Request) string {
+	if c, err := r.Cookie(csrfCookieName); err == nil && c.Value != "" {
+		return c.Value
+	}
+	buf := make([]byte, csrfTokenLen)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand の失敗は OS レベルの致命的障害であり、継続不可能。
+		panic("csrf: rand.Read failed: " + err.Error())
+	}
+	tok := hex.EncodeToString(buf)
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    tok,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(24 * time.Hour / time.Second),
+	})
+	return tok
+}
+
+// CSRFTokenFromContext は現在のリクエストの CSRF トークンを返す。
+// テンプレートで {{.CSRFToken}} として埋め込むために context に詰める。
+func CSRFTokenFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(csrfCtxKey{}).(string)
 	return v
 }

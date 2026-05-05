@@ -18,9 +18,12 @@ type Config struct {
 	AdminPassword       string
 	MaxFileSizeBytes    int64
 	PerClientQuotaBytes int64
+	WebHandler          http.Handler // nil の場合 Web UI は無効
 }
 
 // NewRouter は HTTP ServeMux を構築する。
+// /v1/ws, /v1/blobs/ は専用ハンドラが処理し、それ以外は WebHandler に委譲する。
+// Go の ServeMux はより長いプレフィックスが優先されるため /v1/ が / より先に match する。
 func NewRouter(cfg Config) http.Handler {
 	mux := http.NewServeMux()
 
@@ -30,6 +33,11 @@ func NewRouter(cfg Config) http.Handler {
 	if cfg.BlobStore != nil {
 		blobsHandler := NewBlobsHandler(cfg.BlobStore, cfg.Store, cfg.MaxFileSizeBytes, cfg.PerClientQuotaBytes)
 		mux.Handle("/v1/blobs/", AccessLog(AuthBearerWithClientID(cfg.Store, cfg.PSK, blobsHandler)))
+	}
+
+	if cfg.WebHandler != nil {
+		webUI := AccessLog(BasicAuth(cfg.AdminUser, cfg.AdminPassword, CSRF(cfg.WebHandler)))
+		mux.Handle("/", webUI)
 	}
 
 	return mux

@@ -18,6 +18,7 @@ import (
 	httpsrv "github.com/HMasataka/axion/internal/server/http"
 	"github.com/HMasataka/axion/internal/server/store"
 	"github.com/HMasataka/axion/internal/server/syncengine"
+	"github.com/HMasataka/axion/internal/server/web"
 )
 
 const perClientQuotaBytes int64 = 10 * 1024 * 1024 * 1024 // 10GB (spec.md L62)
@@ -126,6 +127,8 @@ func Run(ctx context.Context, cfg Config) error {
 	)
 	hubSender.h = h
 
+	webHandler := web.Handler(web.Config{Store: s, Publisher: engine})
+
 	router := httpsrv.NewRouter(httpsrv.Config{
 		Store:               s,
 		Hub:                 h,
@@ -135,6 +138,7 @@ func Run(ctx context.Context, cfg Config) error {
 		AdminPassword:       cfg.AdminPassword,
 		MaxFileSizeBytes:    maxFileSize,
 		PerClientQuotaBytes: perClientQuotaBytes,
+		WebHandler:          webHandler,
 	})
 
 	srv := &http.Server{
