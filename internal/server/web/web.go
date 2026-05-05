@@ -14,13 +14,40 @@ import (
 	"github.com/HMasataka/axion/internal/server/store"
 )
 
+// Server は Web UI Handler とその依存を保持する。
+// app.go から循環参照なしに NotifyClientChange を呼ぶためのエントリポイント。
+type Server struct {
+	cfg       Config
+	templates map[string]*template.Template
+}
+
+// NewServer は Server を初期化する。
+func NewServer(cfg Config) *Server {
+	return &Server{cfg: cfg, templates: mustParseTemplates()}
+}
+
+// Handler は Web UI HTTP Handler を構築する。
+func (s *Server) Handler() http.Handler {
+	return buildHandler(s.cfg, s.templates)
+}
+
+// NotifyClientChange は client の変化を全 WS subscriber に push する。
+func (s *Server) NotifyClientChange(c store.Client) {
+	if s.cfg.Broadcaster == nil {
+		return
+	}
+	s.cfg.Broadcaster.PublishClientStatus(s.templates["clients"], toClientView(c))
+}
+
 //go:embed assets/static assets/templates
 var assets embed.FS
 
 // Config は Web UI Handler の設定。
 type Config struct {
-	Store     store.Store
-	Publisher PairPublisher // nil の場合 PublishPairUpdate などは skip
+	Store       store.Store
+	Publisher   PairPublisher // nil の場合 PublishPairUpdate などは skip
+	Hub         HubSender    // browse handler で使用。nil の場合 browse 機能は無効
+	Broadcaster *Broadcaster // nil の場合 /admin/ws は登録されない
 }
 
 // ClientView は表示用に変換された Client。
@@ -30,14 +57,20 @@ type ClientView struct {
 }
 
 // Handler は Web UI HTTP Handler を構築する。
-//   - GET /                          → クライアント一覧
-//   - GET /clients/{id}/edit         → クライアント編集フォーム (HTMX partial)
-//   - POST /clients/{id}/display-name → display name 更新 (HTMX partial)
-//   - GET /clients/{id}/cancel       → 編集キャンセル (HTMX partial)
-//   - GET /pairs                     → ペア一覧 (stub)
-//   - GET /settings                  → 設定 (stub)
-//   - GET /static/*                  → 埋め込み静的アセット
+//   - GET /                               → クライアント一覧
+//   - GET /clients/{id}/edit              → クライアント編集フォーム (HTMX partial)
+//   - POST /clients/{id}/display-name     → display name 更新 (HTMX partial)
+//   - GET /clients/{id}/cancel            → 編集キャンセル (HTMX partial)
+//   - GET /clients/{id}/browse?path=<p>   → ディレクトリブラウザ
+//   - GET /pairs                          → ペア一覧
+//   - GET /settings                       → 設定
+//   - GET /static/*                       → 埋め込み静的アセット
+//   - GET /admin/ws                       → WebSocket (Broadcaster が設定されている場合)
 func Handler(cfg Config) http.Handler {
+	return buildHandler(cfg, mustParseTemplates())
+}
+
+func buildHandler(cfg Config, templates map[string]*template.Template) http.Handler {
 	mux := http.NewServeMux()
 
 	staticFS, err := fs.Sub(assets, "assets/static")
@@ -46,14 +79,29 @@ func Handler(cfg Config) http.Handler {
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	templates := mustParseTemplates()
-
 	mux.HandleFunc("/", clientsListHandler(cfg, templates["clients"]))
-	mux.HandleFunc("/clients/", clientRowHandler(cfg, templates["clients"]))
+	mux.HandleFunc("/clients/", func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, "/clients/")
+		parts := strings.SplitN(p, "/", 2)
+		if len(parts) != 2 {
+			http.NotFound(w, r)
+			return
+		}
+		if parts[1] == "browse" {
+			browseHandler(cfg, templates["browse"])(w, r)
+			return
+		}
+		clientRowHandler(cfg, templates["clients"])(w, r)
+	})
 	mux.HandleFunc("/pairs", pairsListHandler(cfg, templates["pairs"]))
 	mux.HandleFunc("/pairs/", pairFormHandler(cfg, templates["pairs"]))
 	mux.HandleFunc("/settings", settingsListHandler(cfg, templates["settings"]))
 	mux.HandleFunc("/settings/", settingRowHandler(cfg, templates["settings"]))
+	mux.HandleFunc("/runs", runsListHandler(cfg, templates["runs"]))
+
+	if cfg.Broadcaster != nil {
+		mux.Handle("/admin/ws", adminWSHandler(cfg.Broadcaster))
+	}
 
 	return mux
 }
@@ -62,7 +110,7 @@ func Handler(cfg Config) http.Handler {
 // 各エントリは "base" テンプレートを起点に実行できる独立したセット。
 // clients セットには client_row / client_edit_row も含まれる。
 func mustParseTemplates() map[string]*template.Template {
-	pages := []string{"clients", "pairs", "settings"}
+	pages := []string{"clients", "pairs", "settings", "browse", "runs"}
 	result := make(map[string]*template.Template, len(pages))
 
 	for _, name := range pages {

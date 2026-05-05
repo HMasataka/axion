@@ -113,6 +113,22 @@ func (r *Runner) HandleEnvelope(ctx context.Context, env proto.Envelope) error {
 		}
 		go r.handleSyncCommand(ctx, cmd)
 		return nil
+	case proto.TypeListDirRequest:
+		var req proto.ListDirRequest
+		if err := proto.UnmarshalPayload(env.Payload, &req); err != nil {
+			return err
+		}
+		resp := r.HandleListDir(ctx, req)
+		respPayload, err := proto.MarshalPayload(resp)
+		if err != nil {
+			return err
+		}
+		respEnv := proto.Envelope{
+			Type:          proto.TypeListDirResponse,
+			CorrelationID: env.CorrelationID,
+			Payload:       respPayload,
+		}
+		return r.cfg.Sender.Send(ctx, respEnv)
 	default:
 		return nil
 	}

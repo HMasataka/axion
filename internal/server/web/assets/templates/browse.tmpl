@@ -1,0 +1,55 @@
+{{define "content"}}
+<h1>Browse: {{.ClientLabel}}</h1>
+<p><strong>Current path:</strong> <code>{{.CurrentPath}}</code></p>
+
+<div id="browse-content">
+{{template "browse_listing" .}}
+</div>
+{{end}}
+
+{{define "browse_listing"}}
+{{if .Error}}
+  <article class="error">Error: {{.Error}}</article>
+{{end}}
+<table>
+  <thead>
+    <tr><th>Name</th><th>Type</th><th>Size</th></tr>
+  </thead>
+  <tbody>
+    {{if ne .CurrentPath "."}}
+    <tr>
+      <td>
+        <a href="#"
+           hx-get="/clients/{{.ClientID}}/browse?path={{.Parent}}"
+           hx-target="#browse-content"
+           hx-swap="innerHTML"
+           hx-push-url="/clients/{{.ClientID}}/browse?path={{.Parent}}">
+          .. (parent)
+        </a>
+      </td>
+      <td>dir</td>
+      <td>—</td>
+    </tr>
+    {{end}}
+    {{range .Entries}}
+    <tr>
+      <td>
+        {{if .IsDir}}
+        <a href="#"
+           hx-get="/clients/{{$.ClientID}}/browse?path={{$.CurrentPath}}/{{.Name}}"
+           hx-target="#browse-content"
+           hx-swap="innerHTML"
+           hx-push-url="/clients/{{$.ClientID}}/browse?path={{$.CurrentPath}}/{{.Name}}">
+          {{.Name}}/
+        </a>
+        {{else}}
+          {{.Name}}
+        {{end}}
+      </td>
+      <td>{{if .IsDir}}dir{{else}}file{{end}}</td>
+      <td>{{if .IsDir}}—{{else}}{{.Size}}{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

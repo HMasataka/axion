@@ -94,6 +94,9 @@ func Run(ctx context.Context, cfg Config) error {
 	var hubSender hubSenderProxy
 	engine := syncengine.New(s, &hubSender)
 
+	broadcaster := web.NewBroadcaster()
+	webSrv := web.NewServer(web.Config{Store: s, Publisher: engine, Broadcaster: broadcaster})
+
 	h := hub.New(
 		hub.HandlerFunc(func(hctx context.Context, clientID string, env proto.Envelope) error {
 			switch env.Type {
@@ -118,16 +121,22 @@ func Run(ctx context.Context, cfg Config) error {
 			if err := engine.PublishSubscriptions(hctx, clientID); err != nil {
 				slog.ErrorContext(hctx, "publish subscriptions", "client_id", clientID, "error", err)
 			}
+			if c, err := s.GetClient(hctx, clientID); err == nil && c != nil {
+				webSrv.NotifyClientChange(*c)
+			}
 		},
 		func(dctx context.Context, clientID string) {
 			if err := s.UpdateClientStatus(dctx, clientID, "offline", time.Now()); err != nil {
 				slog.ErrorContext(dctx, "update client status", "client_id", clientID, "error", err)
 			}
+			if c, err := s.GetClient(dctx, clientID); err == nil && c != nil {
+				webSrv.NotifyClientChange(*c)
+			}
 		},
 	)
 	hubSender.h = h
 
-	webHandler := web.Handler(web.Config{Store: s, Publisher: engine})
+	webHandler := webSrv.Handler()
 
 	router := httpsrv.NewRouter(httpsrv.Config{
 		Store:               s,
