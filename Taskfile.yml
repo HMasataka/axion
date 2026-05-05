@@ -58,6 +58,14 @@ tasks:
       - rm -rf {{.BUILD_DIR}}
       - rm -f coverage.out coverage.html
 
+  release:
+    desc: "Build single binary (CGO disabled)"
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -ldflags='-s -w' -o ./{{.BUILD_DIR}}/{{.BINARY_NAME}} ./cmd/axion
+      - file ./{{.BUILD_DIR}}/{{.BINARY_NAME}}
+
   install:
     desc: Install the binary
     cmds:

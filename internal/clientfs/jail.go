@@ -188,3 +188,45 @@ func (j *Jail) MkdirAll(rel string) error {
 	}
 	return os.MkdirAll(path, 0755)
 }
+
+// CheckCaseInsensitive は jail root が大文字小文字を区別しないファイルシステムかを判定する。
+// 一時ファイルを 2 つ（lower + upper）作成し os.SameFile で同一 inode か確認する。
+// 判定後に一時ファイルは削除する。
+func (j *Jail) CheckCaseInsensitive() (bool, error) {
+	ts := fmt.Sprintf("%d", os.Getpid())
+	lowerName := ".axion-case-" + ts + ".tmp"
+	upperName := ".AXION-CASE-" + ts + ".TMP"
+
+	lowerPath := filepath.Join(j.root, lowerName)
+	upperPath := filepath.Join(j.root, upperName)
+
+	lf, err := os.OpenFile(lowerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return false, fmt.Errorf("clientfs: case check create lower: %w", err)
+	}
+	lf.Close()
+	defer os.Remove(lowerPath)
+
+	uf, err := os.OpenFile(upperPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		// upper の作成に失敗した場合、case-insensitive FS では lower と同じファイルになるため
+		// EEXIST になる可能性がある。その場合は case-insensitive と判定する。
+		if os.IsExist(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("clientfs: case check create upper: %w", err)
+	}
+	uf.Close()
+	defer os.Remove(upperPath)
+
+	lowerInfo, err := os.Stat(lowerPath)
+	if err != nil {
+		return false, fmt.Errorf("clientfs: case check stat lower: %w", err)
+	}
+	upperInfo, err := os.Stat(upperPath)
+	if err != nil {
+		return false, fmt.Errorf("clientfs: case check stat upper: %w", err)
+	}
+
+	return os.SameFile(lowerInfo, upperInfo), nil
+}

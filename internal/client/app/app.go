@@ -78,6 +78,13 @@ func Run(ctx context.Context, cfg Config) error {
 	sender := &connSender{c: c}
 
 	var r *runner.Runner
+	defer func() {
+		if r != nil {
+			if err := r.Stop(); err != nil {
+				slog.WarnContext(ctx, "runner stop", "error", err)
+			}
+		}
+	}()
 
 	return c.Run(ctx,
 		func(settings map[string]string) {
