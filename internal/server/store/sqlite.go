@@ -294,10 +294,21 @@ func (s *SQLite) InsertSyncRun(ctx context.Context, r SyncRun) (int64, error) {
 }
 
 func (s *SQLite) ListRecentSyncRuns(ctx context.Context, pairID string, limit int) ([]SyncRun, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, pair_id, src_client_id, dst_client_id, rel_path, sha256, bytes, status, error, started_at, finished_at
-		FROM sync_runs WHERE pair_id = ? ORDER BY started_at DESC LIMIT ?
-	`, pairID, limit)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if pairID == "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, pair_id, src_client_id, dst_client_id, rel_path, sha256, bytes, status, error, started_at, finished_at
+			FROM sync_runs ORDER BY started_at DESC LIMIT ?
+		`, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, pair_id, src_client_id, dst_client_id, rel_path, sha256, bytes, status, error, started_at, finished_at
+			FROM sync_runs WHERE pair_id = ? ORDER BY started_at DESC LIMIT ?
+		`, pairID, limit)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list recent sync runs: %w", err)
 	}

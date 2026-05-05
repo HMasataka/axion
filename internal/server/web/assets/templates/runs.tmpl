@@ -1,0 +1,60 @@
+{{define "content"}}
+<h1>Sync Runs</h1>
+
+<form method="get" action="/runs" style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem;">
+  <label>Pair
+    <select name="pair_id" onchange="this.form.submit()">
+      <option value="">All pairs</option>
+      {{range .Pairs}}
+      <option value="{{.ID}}" {{if eq .ID $.SelectedPairID}}selected{{end}}>{{.Name}}</option>
+      {{end}}
+    </select>
+  </label>
+  <label>Status
+    <select name="status" onchange="this.form.submit()">
+      <option value="">All</option>
+      <option value="ok" {{if eq "ok" .SelectedStatus}}selected{{end}}>OK</option>
+      <option value="failed" {{if eq "failed" .SelectedStatus}}selected{{end}}>Failed</option>
+      <option value="conflict" {{if eq "conflict" .SelectedStatus}}selected{{end}}>Conflict</option>
+      <option value="skipped" {{if eq "skipped" .SelectedStatus}}selected{{end}}>Skipped</option>
+    </select>
+  </label>
+  <label>Limit
+    <input type="number" name="limit" value="{{.Limit}}" min="1" max="1000">
+  </label>
+  <button type="submit">Apply</button>
+</form>
+
+{{if .Runs}}
+<table>
+  <thead>
+    <tr>
+      <th>Pair</th>
+      <th>Started</th>
+      <th>Duration (ms)</th>
+      <th>Path</th>
+      <th>SHA</th>
+      <th>Bytes</th>
+      <th>Status</th>
+      <th>Error</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Runs}}
+    <tr>
+      <td>{{if .PairName}}{{.PairName}}{{else}}{{.PairID}}{{end}}</td>
+      <td>{{.StartedAtString}}</td>
+      <td>{{.DurationMs}}</td>
+      <td><code>{{.RelPath}}</code></td>
+      <td><code>{{.SHA256Short}}</code></td>
+      <td>{{.Bytes}}</td>
+      <td>{{.Status}}</td>
+      <td>{{.Error}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p><em>No sync runs yet.</em></p>
+{{end}}
+{{end}}

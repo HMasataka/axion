@@ -415,6 +415,45 @@ func TestRunner_HandleFileSyncCommand_Fetch_DownloadError(t *testing.T) {
 	}
 }
 
+func TestRunner_HandleListDirRequest_Responds(t *testing.T) {
+	// Given: Runner と ListDirRequest (CorrelationID 付き)
+	r, sender := makeRunner(t, nil)
+	ctx := context.Background()
+
+	corrID := "test-corr-id-001"
+	req := proto.ListDirRequest{RelPath: "."}
+	env := proto.Envelope{
+		Type:          proto.TypeListDirRequest,
+		CorrelationID: corrID,
+		Payload:       mustMarshalPayload(t, req),
+	}
+
+	// When: HandleEnvelope を呼ぶ
+	if err := r.HandleEnvelope(ctx, env); err != nil {
+		t.Fatalf("HandleEnvelope: %v", err)
+	}
+
+	// Then: ListDirResponse が CorrelationID を引き継いで送信される
+	received := sender.Received()
+	if len(received) != 1 {
+		t.Fatalf("expected 1 sent envelope, got %d", len(received))
+	}
+	respEnv := received[0]
+	if respEnv.Type != proto.TypeListDirResponse {
+		t.Errorf("expected type=%s, got %s", proto.TypeListDirResponse, respEnv.Type)
+	}
+	if respEnv.CorrelationID != corrID {
+		t.Errorf("expected CorrelationID=%s, got %s", corrID, respEnv.CorrelationID)
+	}
+	var resp proto.ListDirResponse
+	if err := proto.UnmarshalPayload(respEnv.Payload, &resp); err != nil {
+		t.Fatalf("UnmarshalPayload: %v", err)
+	}
+	if resp.Error != "" {
+		t.Errorf("unexpected response error: %s", resp.Error)
+	}
+}
+
 func TestRunner_New_MissingJail(t *testing.T) {
 	_, err := New(Config{
 		Transfer: &fakeTransferClient{},

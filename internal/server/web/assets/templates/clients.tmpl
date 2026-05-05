@@ -35,6 +35,12 @@
 </td>
 {{end}}
 
+{{define "client_row_with_tr"}}
+<tr id="client-{{.ID}}" hx-swap-oob="outerHTML">
+  {{template "client_row" .}}
+</tr>
+{{end}}
+
 {{define "client_edit_row"}}
 <td colspan="6">
   <form hx-post="/clients/{{.Client.ID}}/display-name" hx-target="#client-{{.Client.ID}}" hx-swap="innerHTML">

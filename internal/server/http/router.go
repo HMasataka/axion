@@ -30,6 +30,9 @@ func NewRouter(cfg Config) http.Handler {
 	wsHandler := NewWSHandler(cfg.Store, cfg.Hub)
 	mux.Handle("/v1/ws", AccessLog(AuthBearer(cfg.Store, cfg.PSK, wsHandler)))
 
+	listDirHandler := NewListDirHandler(cfg.Hub, cfg.Store)
+	mux.Handle("/v1/clients/", AccessLog(AuthBearer(cfg.Store, cfg.PSK, listDirHandler)))
+
 	if cfg.BlobStore != nil {
 		blobsHandler := NewBlobsHandler(cfg.BlobStore, cfg.Store, cfg.MaxFileSizeBytes, cfg.PerClientQuotaBytes)
 		mux.Handle("/v1/blobs/", AccessLog(AuthBearerWithClientID(cfg.Store, cfg.PSK, blobsHandler)))

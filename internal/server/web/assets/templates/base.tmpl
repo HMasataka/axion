@@ -6,8 +6,9 @@
   <title>{{.Title}} - axion</title>
   <link rel="stylesheet" href="/static/pico.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/htmx-ws-ext.js" defer></script>
 </head>
-<body>
+<body hx-ext="ws" ws-connect="/admin/ws">
   <header class="container">
     <nav>
       <ul>
@@ -16,6 +17,7 @@
       <ul>
         <li><a href="/">Clients</a></li>
         <li><a href="/pairs">Pairs</a></li>
+        <li><a href="/runs">Runs</a></li>
         <li><a href="/settings">Settings</a></li>
       </ul>
     </nav>
