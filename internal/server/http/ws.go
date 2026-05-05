@@ -82,8 +82,6 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn := hub.NewConn(req.ClientID, ws, h.hub)
 	h.hub.Register(conn)
 	conn.Run(ctx)
-
-	_ = h.store.UpdateClientStatus(ctx, req.ClientID, "offline", time.Now())
 }
 
 func (h *WSHandler) receiveRegisterRequest(ctx context.Context, ws *websocket.Conn) (*proto.RegisterRequest, error) {

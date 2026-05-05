@@ -40,8 +40,10 @@ func NewConn(clientID string, ws *websocket.Conn, h *Hub) *Conn {
 }
 
 // Run は読み取りループ + ping ループを開始する。
-// ctx canceled / ping error / read error で終了し、Hub から自動的に Unregister + OnDisconnect 発火。
+// ctx canceled / ping error / read error / Hub.Close() で終了し、
+// Hub から自動的に Unregister + OnDisconnect 発火。
 func (c *Conn) Run(ctx context.Context) {
+	defer c.hub.wg.Done()
 	go c.pingLoop(ctx)
 	c.readLoop(ctx)
 	c.Close()

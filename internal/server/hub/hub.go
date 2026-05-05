@@ -35,6 +35,7 @@ type Hub struct {
 	onConnect OnConnect
 	onDisc    OnDisconnect
 	pending   *PendingRegistry
+	wg        sync.WaitGroup // Run 中の Conn 数
 }
 
 func New(handler Handler, onConnect OnConnect, onDisc OnDisconnect) *Hub {
@@ -56,10 +57,35 @@ func (h *Hub) Register(c *Conn) {
 	}
 	h.conns[c.clientID] = c
 	onConnect := h.onConnect
+	h.wg.Add(1)
 	h.mu.Unlock()
 
 	if onConnect != nil {
 		go onConnect(context.Background(), c.clientID)
+	}
+}
+
+// Close は全 Conn を閉じ Run 完了を待つ。http.Server.Shutdown が hijacked WS を待たないため必要。
+func (h *Hub) Close(timeout time.Duration) {
+	h.mu.Lock()
+	conns := make([]*Conn, 0, len(h.conns))
+	for _, c := range h.conns {
+		conns = append(conns, c)
+	}
+	h.mu.Unlock()
+
+	for _, c := range conns {
+		c.Close()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		h.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
 	}
 }
 
