@@ -124,6 +124,25 @@ func Run(ctx context.Context, cfg Config) error {
 			if c, err := s.GetClient(hctx, clientID); err == nil && c != nil {
 				webSrv.NotifyClientChange(*c)
 			}
+			go func() {
+				pairs, err := s.ListPairsForClient(hctx, clientID)
+				if err != nil {
+					slog.WarnContext(hctx, "list pairs for client", "client_id", clientID, "error", err)
+					return
+				}
+				for _, p := range pairs {
+					if !p.Enabled {
+						continue
+					}
+					side := "a"
+					if p.ClientBID == clientID {
+						side = "b"
+					}
+					if err := engine.RequestSnapshotAndDiff(hctx, &hubSender, clientID, p.ID, side); err != nil {
+						slog.WarnContext(hctx, "snapshot diff", "client_id", clientID, "pair_id", p.ID, "error", err)
+					}
+				}
+			}()
 		},
 		func(dctx context.Context, clientID string) {
 			if err := s.UpdateClientStatus(dctx, clientID, "offline", time.Now()); err != nil {
@@ -135,6 +154,8 @@ func Run(ctx context.Context, cfg Config) error {
 		},
 	)
 	hubSender.h = h
+
+	go blobstore.RunGCLoop(ctx, bs, s, blobGCMaxAge(ctx, s))
 
 	webHandler := webSrv.Handler()
 
@@ -172,6 +193,10 @@ type hubSenderProxy struct {
 
 func (p *hubSenderProxy) Send(ctx context.Context, clientID string, env proto.Envelope) error {
 	return p.h.Send(ctx, clientID, env)
+}
+
+func (p *hubSenderProxy) SendAndWait(ctx context.Context, clientID string, env proto.Envelope, timeout time.Duration) (proto.Envelope, error) {
+	return p.h.SendAndWait(ctx, clientID, env, timeout)
 }
 
 func runServer(ctx context.Context, srv *http.Server, grace time.Duration, onReady func()) error {
@@ -226,4 +251,28 @@ func parseInt64Setting(settings map[string]string, key string, fallback int64) (
 		return 0, fmt.Errorf("invalid setting %s=%q: %w", key, v, err)
 	}
 	return n, nil
+}
+
+const defaultBlobGCAge = 7 * 24 * time.Hour
+
+// blobGCMaxAge は設定 blob_gc_age_seconds から GC 対象の最低経過時間を読み取って返す。
+// 設定が存在しない場合は defaultBlobGCAge を使う。
+func blobGCMaxAge(ctx context.Context, s store.Store) func() time.Duration {
+	return func() time.Duration {
+		settings, err := s.LoadAllSettings(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "gc load settings", "error", err)
+			return defaultBlobGCAge
+		}
+		v, ok := settings["blob_gc_age_seconds"]
+		if !ok {
+			return defaultBlobGCAge
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			slog.WarnContext(ctx, "gc parse blob_gc_age_seconds", "value", v, "error", err)
+			return defaultBlobGCAge
+		}
+		return time.Duration(n) * time.Second
+	}
 }

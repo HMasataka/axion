@@ -452,6 +452,84 @@ func TestMkdirAll_Success(t *testing.T) {
 	}
 }
 
+func TestCheckCaseInsensitive_Detected(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("this test expects case-insensitive filesystem (macOS APFS default)")
+	}
+
+	// Given: 有効な Jail (macOS では APFS がデフォルト case-insensitive)
+	root := t.TempDir()
+	j, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When: case-insensitive チェックを行う
+	isCI, err := j.CheckCaseInsensitive()
+
+	// Then: エラーなし、macOS では true が返る
+	if err != nil {
+		t.Fatalf("CheckCaseInsensitive error: %v", err)
+	}
+	if !isCI {
+		t.Error("expected case-insensitive=true on macOS default APFS")
+	}
+}
+
+func TestCheckCaseInsensitive_LinuxFalse(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test expects case-sensitive filesystem (Linux ext4/tmpfs default)")
+	}
+
+	// Given: 有効な Jail (Linux では tmpfs/ext4 が case-sensitive)
+	root := t.TempDir()
+	j, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	isCI, err := j.CheckCaseInsensitive()
+
+	// Then: false が返る
+	if err != nil {
+		t.Fatalf("CheckCaseInsensitive error: %v", err)
+	}
+	if isCI {
+		t.Error("expected case-insensitive=false on Linux")
+	}
+}
+
+func TestCheckCaseInsensitive_CleansUpFiles(t *testing.T) {
+	// Given: 有効な Jail
+	root := t.TempDir()
+	j, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When: チェックを実行する
+	_, err = j.CheckCaseInsensitive()
+	if err != nil {
+		t.Fatalf("CheckCaseInsensitive error: %v", err)
+	}
+
+	// Then: 一時ファイルが残っていない
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if len(name) > 12 && name[:12] == ".axion-case-" {
+			t.Errorf("temporary file not cleaned up: %s", name)
+		}
+		if len(name) > 12 && name[:12] == ".AXION-CASE-" {
+			t.Errorf("temporary file not cleaned up: %s", name)
+		}
+	}
+}
+
 func TestStat_RejectsFIFO(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("FIFO not supported on Windows")

@@ -55,7 +55,7 @@ func TestHub_UnregisterRemovesClient(t *testing.T) {
 	h.Register(c)
 
 	// When
-	h.Unregister("client-1")
+	h.Unregister(c)
 
 	// Then
 	if h.IsOnline("client-1") {

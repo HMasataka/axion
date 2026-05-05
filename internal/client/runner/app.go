@@ -129,6 +129,22 @@ func (r *Runner) HandleEnvelope(ctx context.Context, env proto.Envelope) error {
 			Payload:       respPayload,
 		}
 		return r.cfg.Sender.Send(ctx, respEnv)
+	case proto.TypeListFilesRequest:
+		var req proto.ListFilesRequest
+		if err := proto.UnmarshalPayload(env.Payload, &req); err != nil {
+			return err
+		}
+		resp := r.HandleListFiles(ctx, req)
+		respPayload, err := proto.MarshalPayload(resp)
+		if err != nil {
+			return err
+		}
+		respEnv := proto.Envelope{
+			Type:          proto.TypeListFilesResponse,
+			CorrelationID: env.CorrelationID,
+			Payload:       respPayload,
+		}
+		return r.cfg.Sender.Send(ctx, respEnv)
 	default:
 		return nil
 	}

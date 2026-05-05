@@ -45,7 +45,7 @@ func (c *Conn) Run(ctx context.Context) {
 	go c.pingLoop(ctx)
 	c.readLoop(ctx)
 	c.Close()
-	c.hub.Unregister(c.clientID)
+	c.hub.Unregister(c)
 	c.hub.onDisc(ctx, c.clientID)
 }
 

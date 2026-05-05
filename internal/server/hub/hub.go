@@ -63,10 +63,13 @@ func (h *Hub) Register(c *Conn) {
 	}
 }
 
-// Unregister は接続を解除する。
-func (h *Hub) Unregister(clientID string) {
+// Unregister は c が現在登録されている接続と同一の場合のみ解除する。
+// 再接続で新しい Conn が既に登録されている場合は削除しない。
+func (h *Hub) Unregister(c *Conn) {
 	h.mu.Lock()
-	delete(h.conns, clientID)
+	if h.conns[c.clientID] == c {
+		delete(h.conns, c.clientID)
+	}
 	h.mu.Unlock()
 }
 
