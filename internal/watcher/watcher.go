@@ -154,8 +154,16 @@ func (w *Watcher) shouldIgnore(path string) bool {
 	return false
 }
 
+// pendingEvent は debounce 中の同 path への Op フラグ蓄積用。
+// macOS は Create/Write の直後に Chmod を発行することがあり、Chmod 単独では
+// processEvent でハンドルされない。Op を OR 集約することで Write/Create を保持する。
+type pendingEvent struct {
+	op    fsnotify.Op
+	timer *time.Timer
+}
+
 func (w *Watcher) watchLoop(ctx context.Context) {
-	debouncer := make(map[string]*time.Timer)
+	debouncer := make(map[string]*pendingEvent)
 	var debounceMu sync.Mutex
 
 	for {
@@ -179,17 +187,27 @@ func (w *Watcher) watchLoop(ctx context.Context) {
 				continue
 			}
 
+			name := fsEvent.Name
 			debounceMu.Lock()
-			if timer, exists := debouncer[fsEvent.Name]; exists {
-				timer.Stop()
+			p, exists := debouncer[name]
+			if exists {
+				p.op |= fsEvent.Op
+				p.timer.Stop()
+			} else {
+				p = &pendingEvent{op: fsEvent.Op}
+				debouncer[name] = p
 			}
-
-			eventCopy := fsEvent
-			debouncer[fsEvent.Name] = time.AfterFunc(w.cfg.DebounceDelay, func() {
-				w.processEvent(eventCopy)
+			p.timer = time.AfterFunc(w.cfg.DebounceDelay, func() {
 				debounceMu.Lock()
-				delete(debouncer, eventCopy.Name)
+				e, ok := debouncer[name]
+				if !ok {
+					debounceMu.Unlock()
+					return
+				}
+				op := e.op
+				delete(debouncer, name)
 				debounceMu.Unlock()
+				w.processEvent(fsnotify.Event{Name: name, Op: op})
 			})
 			debounceMu.Unlock()
 		}
