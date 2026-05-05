@@ -46,6 +46,10 @@
 {{end}}
 
 {{define "pair_edit_form"}}
+{{if .Pair.ID}}<td colspan="6">{{template "pair_form_body" .}}</td>{{else}}{{template "pair_form_body" .}}{{end}}
+{{end}}
+
+{{define "pair_form_body"}}
 <form hx-post="/pairs/{{.Action}}"
       {{if .Pair.ID}}hx-target="#pair-{{.Pair.ID}}" hx-swap="innerHTML"{{else}}hx-target="#pairs-content" hx-swap="outerHTML"{{end}}>
   <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
