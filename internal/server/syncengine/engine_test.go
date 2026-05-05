@@ -228,8 +228,8 @@ func TestHandleFileChanged_MirrorBToA(t *testing.T) {
 	}
 }
 
-func TestHandleFileChanged_Bidirectional_LogsAndSkips(t *testing.T) {
-	// Given: bidirectional pair
+func TestHandleFileChanged_Bidirectional_OtherStateNil_Dispatch(t *testing.T) {
+	// Given: bidirectional pair, 相手側に file_state なし
 	s := openTestDB(t)
 	insertClientPair(t, s, "bidirectional", true)
 	sender := &fakeSender{}
@@ -242,9 +242,13 @@ func TestHandleFileChanged_Bidirectional_LogsAndSkips(t *testing.T) {
 		t.Fatalf("HandleFileChanged: %v", err)
 	}
 
-	// Then: 何も送られない
-	if len(sender.messages()) != 0 {
-		t.Errorf("expected 0 sent messages, got %d", len(sender.messages()))
+	// Then: client-b に dispatch される
+	msgs := sender.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(msgs))
+	}
+	if msgs[0].ClientID != "client-b" {
+		t.Errorf("expected client-b, got %s", msgs[0].ClientID)
 	}
 
 	// Then: file_state は更新される
@@ -401,5 +405,289 @@ func TestHandleFileChanged_SenderFails_RecordsFailedRun(t *testing.T) {
 	}
 	if runs[0].Error == nil || *runs[0].Error == "" {
 		t.Error("expected non-empty error message in sync run")
+	}
+}
+
+// upsertFileStateForTest は engine の upsertFileState を通してファイル状態を DB に登録するヘルパー。
+// bidirectional テストで相手側の状態を事前設定するために使う。
+func upsertFileStateForTest(t *testing.T, s store.Store, fs store.FileState) {
+	t.Helper()
+	if err := s.UpsertFileState(context.Background(), fs); err != nil {
+		t.Fatalf("UpsertFileState: %v", err)
+	}
+}
+
+func TestHandleFileChanged_Bidirectional_Dispatch(t *testing.T) {
+	// Given: bidirectional + otherState=nil → 通常 dispatch
+	s := openTestDB(t)
+	insertClientPair(t, s, "bidirectional", true)
+	sender := &fakeSender{}
+	eng := New(s, sender)
+	ctx := context.Background()
+	ev := makeEvent("a", "write")
+
+	// When
+	if err := eng.HandleFileChanged(ctx, "client-a", ev); err != nil {
+		t.Fatalf("HandleFileChanged: %v", err)
+	}
+
+	// Then: client-b に FileSyncCommand 1件
+	msgs := sender.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(msgs))
+	}
+	if msgs[0].ClientID != "client-b" {
+		t.Errorf("expected client-b, got %s", msgs[0].ClientID)
+	}
+	var cmd proto.FileSyncCommand
+	if err := proto.UnmarshalPayload(msgs[0].Env.Payload, &cmd); err != nil {
+		t.Fatalf("UnmarshalPayload: %v", err)
+	}
+	if cmd.Op != "fetch" {
+		t.Errorf("cmd.Op: want fetch, got %s", cmd.Op)
+	}
+}
+
+func TestHandleFileChanged_Bidirectional_Conflict(t *testing.T) {
+	// Given: bidirectional + sha 不一致 + 同時刻 → rename + fetch の 2 件送信 + audit
+	s := openTestDB(t)
+	insertClientPair(t, s, "bidirectional", true)
+	sender := &fakeSender{}
+	eng := New(s, sender)
+	ctx := context.Background()
+
+	// 相手側 (b) に事前に write を登録 (同時刻とみなす: 差を 1sec 以内にする)
+	now := time.Now().UnixNano()
+	bSHA := "b-hash"
+	upsertFileStateForTest(t, s, store.FileState{
+		PairID:        "pair-1",
+		Side:          "b",
+		RelPath:       "docs/file.txt",
+		SHA256:        &bSHA,
+		Op:            "write",
+		ServerModTime: now - int64(500*time.Millisecond),
+		ModTime:       &now,
+	})
+
+	// a 側のイベント: 異なる sha、ほぼ同時刻
+	ev := proto.FileChangedEvent{
+		PairID:  "pair-1",
+		Side:    "a",
+		RelPath: "docs/file.txt",
+		SHA256:  "a-hash",
+		Size:    512,
+		ModTime: now,
+		Op:      "write",
+	}
+
+	// When
+	if err := eng.HandleFileChanged(ctx, "client-a", ev); err != nil {
+		t.Fatalf("HandleFileChanged: %v", err)
+	}
+
+	// Then: rename + loser fetch + winner fetch の 3 件送信
+	msgs := sender.messages()
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 sent messages (rename+loser fetch+winner fetch), got %d", len(msgs))
+	}
+	var renameCmd proto.FileSyncCommand
+	if err := proto.UnmarshalPayload(msgs[0].Env.Payload, &renameCmd); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if renameCmd.Op != "rename" {
+		t.Errorf("msgs[0].Op: want rename, got %s", renameCmd.Op)
+	}
+	var loserFetch proto.FileSyncCommand
+	if err := proto.UnmarshalPayload(msgs[1].Env.Payload, &loserFetch); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if loserFetch.Op != "fetch" {
+		t.Errorf("msgs[1].Op: want fetch, got %s", loserFetch.Op)
+	}
+	var winnerFetch proto.FileSyncCommand
+	if err := proto.UnmarshalPayload(msgs[2].Env.Payload, &winnerFetch); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if winnerFetch.Op != "fetch" {
+		t.Errorf("msgs[2].Op: want fetch, got %s", winnerFetch.Op)
+	}
+
+	// Then: audit_log に conflict_detected + conflict_renamed
+	logs, err := s.ListRecentAuditLog(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListRecentAuditLog: %v", err)
+	}
+	kinds := map[string]int{}
+	for _, l := range logs {
+		kinds[l.Kind]++
+	}
+	if kinds["conflict_detected"] == 0 {
+		t.Error("expected conflict_detected audit entry")
+	}
+	if kinds["conflict_renamed"] == 0 {
+		t.Error("expected conflict_renamed audit entry")
+	}
+}
+
+func TestHandleFileChanged_Bidirectional_DeleteVsEdit_DeleteSideAck(t *testing.T) {
+	// Given: 削除側がイベント送信、相手は write → 削除側に fetch + audit "delete_vs_edit"
+	s := openTestDB(t)
+	insertClientPair(t, s, "bidirectional", true)
+	sender := &fakeSender{}
+	eng := New(s, sender)
+	ctx := context.Background()
+
+	// 相手側 (b) に事前に write を登録
+	now := time.Now().UnixNano()
+	bSHA := "b-existing-hash"
+	upsertFileStateForTest(t, s, store.FileState{
+		PairID:        "pair-1",
+		Side:          "b",
+		RelPath:       "docs/file.txt",
+		SHA256:        &bSHA,
+		Op:            "write",
+		ServerModTime: now - int64(30*time.Second),
+		ModTime:       &now,
+	})
+
+	// a 側が delete を送信
+	ev := proto.FileChangedEvent{
+		PairID:  "pair-1",
+		Side:    "a",
+		RelPath: "docs/file.txt",
+		Op:      "delete",
+		ModTime: now,
+	}
+
+	// When
+	if err := eng.HandleFileChanged(ctx, "client-a", ev); err != nil {
+		t.Fatalf("HandleFileChanged: %v", err)
+	}
+
+	// Then: 削除側 (client-a) に fetch が送られる
+	msgs := sender.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 sent message (fetch to delete side), got %d", len(msgs))
+	}
+	if msgs[0].ClientID != "client-a" {
+		t.Errorf("expected fetch to client-a (delete side), got %s", msgs[0].ClientID)
+	}
+	var cmd proto.FileSyncCommand
+	if err := proto.UnmarshalPayload(msgs[0].Env.Payload, &cmd); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cmd.Op != "fetch" {
+		t.Errorf("cmd.Op: want fetch, got %s", cmd.Op)
+	}
+	if cmd.SHA256 != bSHA {
+		t.Errorf("cmd.SHA256: want %s, got %s", bSHA, cmd.SHA256)
+	}
+
+	// Then: audit_log に delete_vs_edit
+	logs, err := s.ListRecentAuditLog(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListRecentAuditLog: %v", err)
+	}
+	var found bool
+	for _, l := range logs {
+		if l.Kind == "delete_vs_edit" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected delete_vs_edit audit entry")
+	}
+}
+
+func TestHandleFileChanged_Bidirectional_DeleteVsEdit_EditSideAck(t *testing.T) {
+	// Given: 編集側がイベント送信、相手は delete → 削除側に通常 dispatch (上書き)
+	s := openTestDB(t)
+	insertClientPair(t, s, "bidirectional", true)
+	sender := &fakeSender{}
+	eng := New(s, sender)
+	ctx := context.Background()
+
+	// 相手側 (b) に事前に delete を登録
+	now := time.Now().UnixNano()
+	upsertFileStateForTest(t, s, store.FileState{
+		PairID:        "pair-1",
+		Side:          "b",
+		RelPath:       "docs/file.txt",
+		SHA256:        nil,
+		Op:            "delete",
+		ServerModTime: now - int64(30*time.Second),
+		ModTime:       &now,
+	})
+
+	// a 側が write を送信
+	ev := proto.FileChangedEvent{
+		PairID:  "pair-1",
+		Side:    "a",
+		RelPath: "docs/file.txt",
+		SHA256:  "new-content-hash",
+		Size:    1024,
+		Op:      "write",
+		ModTime: now,
+	}
+
+	// When
+	if err := eng.HandleFileChanged(ctx, "client-a", ev); err != nil {
+		t.Fatalf("HandleFileChanged: %v", err)
+	}
+
+	// Then: 削除側 (client-b) に fetch が dispatch される
+	msgs := sender.messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(msgs))
+	}
+	if msgs[0].ClientID != "client-b" {
+		t.Errorf("expected client-b, got %s", msgs[0].ClientID)
+	}
+	var cmd proto.FileSyncCommand
+	if err := proto.UnmarshalPayload(msgs[0].Env.Payload, &cmd); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cmd.Op != "fetch" {
+		t.Errorf("cmd.Op: want fetch, got %s", cmd.Op)
+	}
+}
+
+func TestHandleFileChanged_Bidirectional_BothDelete_None(t *testing.T) {
+	// Given: 両側 delete → 送信なし
+	s := openTestDB(t)
+	insertClientPair(t, s, "bidirectional", true)
+	sender := &fakeSender{}
+	eng := New(s, sender)
+	ctx := context.Background()
+
+	// 相手側 (b) に事前に delete を登録
+	now := time.Now().UnixNano()
+	upsertFileStateForTest(t, s, store.FileState{
+		PairID:        "pair-1",
+		Side:          "b",
+		RelPath:       "docs/file.txt",
+		SHA256:        nil,
+		Op:            "delete",
+		ServerModTime: now - int64(2*time.Second),
+		ModTime:       &now,
+	})
+
+	// a 側も delete
+	ev := proto.FileChangedEvent{
+		PairID:  "pair-1",
+		Side:    "a",
+		RelPath: "docs/file.txt",
+		Op:      "delete",
+		ModTime: now,
+	}
+
+	// When
+	if err := eng.HandleFileChanged(ctx, "client-a", ev); err != nil {
+		t.Fatalf("HandleFileChanged: %v", err)
+	}
+
+	// Then: 送信なし
+	if len(sender.messages()) != 0 {
+		t.Errorf("expected 0 sent messages, got %d", len(sender.messages()))
 	}
 }

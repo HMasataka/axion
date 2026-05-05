@@ -424,3 +424,147 @@ func TestRunner_New_MissingJail(t *testing.T) {
 		t.Fatal("expected error when Jail is nil")
 	}
 }
+
+func TestRunner_HandleFileSyncCommand_Rename(t *testing.T) {
+	// Given: jail にファイルが存在する runner と subscription
+	dir := t.TempDir()
+	jail, err := clientfs.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := jail.Create("original.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	sender := &fakeSender{}
+	r, err := New(Config{
+		Jail:     jail,
+		Transfer: &fakeTransferClient{},
+		Sender:   sender,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r.reg.Apply(proto.SubscribePair{
+		PairID:    "pair-rename",
+		Side:      "a",
+		Direction: "bidirectional",
+	})
+
+	// When: rename コマンドを受信
+	ctx := context.Background()
+	cmd := proto.FileSyncCommand{
+		PairID:     "pair-rename",
+		Side:       "a",
+		RelPath:    "original.txt",
+		NewRelPath: "renamed.txt",
+		Op:         "rename",
+	}
+	env := proto.Envelope{
+		Type:    proto.TypeFileSyncCommand,
+		Payload: mustMarshalPayload(t, cmd),
+	}
+
+	if err := r.HandleEnvelope(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+
+	// handleSyncCommand は goroutine で動くため少し待つ
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if len(sender.Received()) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Then: ack が ok で返り、ファイルが rename されている
+	received := sender.Received()
+	if len(received) != 1 {
+		t.Fatalf("expected 1 ack, got %d", len(received))
+	}
+	var ack proto.FileSyncAck
+	if err := proto.UnmarshalPayload(received[0].Payload, &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.Status != "ok" {
+		t.Errorf("expected status=ok, got %s (error=%s)", ack.Status, ack.Error)
+	}
+
+	if _, err := os.Stat(dir + "/original.txt"); !os.IsNotExist(err) {
+		t.Error("expected original.txt to be gone after rename")
+	}
+	if _, err := os.Stat(dir + "/renamed.txt"); err != nil {
+		t.Errorf("expected renamed.txt to exist: %v", err)
+	}
+}
+
+func TestRunner_Rename_SuppressesWatcher(t *testing.T) {
+	// Given: jail にファイルが存在する runner と subscription
+	dir := t.TempDir()
+	jail, err := clientfs.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := jail.Create("src.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	sender := &fakeSender{}
+	r, err := New(Config{
+		Jail:     jail,
+		Transfer: &fakeTransferClient{},
+		Sender:   sender,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r.reg.Apply(proto.SubscribePair{
+		PairID:    "pair-suppress",
+		Side:      "a",
+		Direction: "bidirectional",
+	})
+
+	// When: rename コマンドを送り、suppress に両パスが登録されていることを確認
+	ctx := context.Background()
+	cmd := proto.FileSyncCommand{
+		PairID:     "pair-suppress",
+		Side:       "a",
+		RelPath:    "src.txt",
+		NewRelPath: "dst.txt",
+		Op:         "rename",
+	}
+	env := proto.Envelope{
+		Type:    proto.TypeFileSyncCommand,
+		Payload: mustMarshalPayload(t, cmd),
+	}
+
+	if err := r.HandleEnvelope(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+
+	// handleSyncCommand は goroutine で動くため少し待つ
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if len(sender.Received()) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Then: 両パスが suppress 登録されている (rename イベントを抑制できる)
+	if !r.supp.Hit("src.txt") {
+		t.Error("expected src.txt to be suppressed after rename")
+	}
+	if !r.supp.Hit("dst.txt") {
+		t.Error("expected dst.txt to be suppressed after rename")
+	}
+}

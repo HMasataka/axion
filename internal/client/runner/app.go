@@ -228,6 +228,15 @@ func (r *Runner) handleSyncCommand(ctx context.Context, cmd proto.FileSyncComman
 			return
 		}
 		r.sendAck(ctx, cmd, "ok", "")
+	case "rename":
+		newJailRel := filepath.Join(sub.RootSubpath, cmd.NewRelPath)
+		r.supp.Add(jailRel, "", suppressTTL)
+		r.supp.Add(newJailRel, "", suppressTTL)
+		if err := r.cfg.Jail.Rename(jailRel, newJailRel); err != nil {
+			r.sendAck(ctx, cmd, "failed", err.Error())
+			return
+		}
+		r.sendAck(ctx, cmd, "ok", "")
 	default:
 		r.sendAck(ctx, cmd, "failed", fmt.Sprintf("unknown op: %s", cmd.Op))
 	}
