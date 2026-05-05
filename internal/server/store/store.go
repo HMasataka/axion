@@ -19,6 +19,7 @@ type Store interface {
 	ListClients(ctx context.Context) ([]Client, error)
 	UpdateClientStatus(ctx context.Context, id, status string, lastSeen time.Time) error
 	UpdateClientDisplayName(ctx context.Context, id, displayName string, expectedEtag int64) (newEtag int64, err error)
+	DeleteClient(ctx context.Context, id string) error
 
 	// Sync pairs
 	UpsertPair(ctx context.Context, p SyncPair) error

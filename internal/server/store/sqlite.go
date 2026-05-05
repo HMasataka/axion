@@ -143,6 +143,15 @@ func (s *SQLite) UpdateClientDisplayName(ctx context.Context, id, displayName st
 	return newEtag, nil
 }
 
+// DeleteClient は client を削除する。ON DELETE CASCADE により
+// 関連する sync_pairs (client_a_id または client_b_id 一致) も自動削除される。
+func (s *SQLite) DeleteClient(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM clients WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete client: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLite) UpsertPair(ctx context.Context, p SyncPair) error {
 	enabled := 0
 	if p.Enabled {

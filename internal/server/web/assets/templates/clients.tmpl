@@ -23,7 +23,7 @@
 {{end}}
 
 {{define "client_row"}}
-<td>{{.DisplayName}}</td>
+<td>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Hostname}}{{end}}</td>
 <td>{{.Hostname}}</td>
 <td>{{.RootPath}}</td>
 <td>{{.Status}}</td>
@@ -32,6 +32,14 @@
   <button type="button" hx-get="/clients/{{.ID}}/edit" hx-target="#client-{{.ID}}" hx-swap="innerHTML">
     Edit
   </button>
+  {{if eq .Status "offline"}}
+  <button type="button" hx-delete="/clients/{{.ID}}"
+          hx-target="#client-{{.ID}}" hx-swap="outerHTML"
+          hx-headers='js:{"X-CSRF-Token": document.querySelector("meta[name=csrf-token]")?.content || ""}'
+          hx-confirm="Delete offline client {{if .DisplayName}}{{.DisplayName}}{{else}}{{.Hostname}}{{end}}? Related sync pairs will also be removed.">
+    Delete
+  </button>
+  {{end}}
 </td>
 {{end}}
 

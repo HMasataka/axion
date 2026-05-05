@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/HMasataka/axion/internal/proto"
+	httpsrv "github.com/HMasataka/axion/internal/server/http"
 )
 
 // HubSender はクライアントへの送受信機能を抽象化する。
@@ -28,6 +29,7 @@ type browseData struct {
 	Parent      string
 	Entries     []proto.DirEntry
 	Error       string
+	CSRFToken   string
 }
 
 func browseHandler(cfg Config, tmpl *template.Template) http.HandlerFunc {
@@ -53,6 +55,7 @@ func browseHandler(cfg Config, tmpl *template.Template) http.HandlerFunc {
 			ClientLabel: clientLabel(c.DisplayName, c.Hostname, c.RootPath),
 			CurrentPath: curPath,
 			Parent:      parentPath(curPath),
+			CSRFToken:   httpsrv.CSRFTokenFromContext(r.Context()),
 		}
 
 		if cfg.Hub == nil || !cfg.Hub.IsOnline(clientID) {

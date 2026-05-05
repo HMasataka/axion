@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	httpsrv "github.com/HMasataka/axion/internal/server/http"
 	"github.com/HMasataka/axion/internal/server/store"
 )
 
@@ -35,6 +36,7 @@ type runsPageData struct {
 	SelectedPairID string
 	SelectedStatus string
 	Limit          int
+	CSRFToken      string
 }
 
 func runsListHandler(cfg Config, tmpl *template.Template) http.HandlerFunc {
@@ -71,6 +73,7 @@ func runsListHandler(cfg Config, tmpl *template.Template) http.HandlerFunc {
 			Title:          "Sync Runs",
 			Runs:           viewRuns,
 			Pairs:          pairs,
+			CSRFToken:      httpsrv.CSRFTokenFromContext(r.Context()),
 			SelectedPairID: pairFilter,
 			SelectedStatus: statusFilter,
 			Limit:          limit,
