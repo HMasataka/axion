@@ -172,8 +172,7 @@ func handlePairCreate(w http.ResponseWriter, r *http.Request, cfg Config, tmpl *
 		views[i] = toPairView(ep, clientsByID, csrf)
 	}
 
-	render(w, tmpl, "content", map[string]any{
-		"Title": "Sync Pairs",
+	render(w, tmpl, "pairs_content", map[string]any{
 		"Pairs": views,
 	})
 }

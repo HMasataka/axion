@@ -1,30 +1,35 @@
 {{define "content"}}
 <h1>Sync Pairs</h1>
+{{template "pairs_content" .}}
+{{end}}
 
-<button type="button" hx-get="/pairs/new" hx-target="#new-pair-form" hx-swap="innerHTML">
-  Create new pair
-</button>
-<div id="new-pair-form"></div>
+{{define "pairs_content"}}
+<div id="pairs-content">
+  <button type="button" hx-get="/pairs/new" hx-target="#new-pair-form" hx-swap="innerHTML">
+    Create new pair
+  </button>
+  <div id="new-pair-form"></div>
 
-<table id="pairs-table">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Client A → Path</th>
-      <th>Client B → Path</th>
-      <th>Direction</th>
-      <th>Enabled</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Pairs}}
-    <tr id="pair-{{.ID}}">
-      {{template "pair_row" .}}
-    </tr>
-    {{end}}
-  </tbody>
-</table>
+  <table id="pairs-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Client A → Path</th>
+        <th>Client B → Path</th>
+        <th>Direction</th>
+        <th>Enabled</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Pairs}}
+      <tr id="pair-{{.ID}}">
+        {{template "pair_row" .}}
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
 {{end}}
 
 {{define "pair_row"}}
@@ -42,7 +47,7 @@
 
 {{define "pair_edit_form"}}
 <form hx-post="/pairs/{{.Action}}"
-      {{if .Pair.ID}}hx-target="#pair-{{.Pair.ID}}" hx-swap="innerHTML"{{else}}hx-target="#new-pair-form" hx-swap="innerHTML"{{end}}>
+      {{if .Pair.ID}}hx-target="#pair-{{.Pair.ID}}" hx-swap="innerHTML"{{else}}hx-target="#pairs-content" hx-swap="outerHTML"{{end}}>
   <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
   {{if .Pair.ID}}<input type="hidden" name="id" value="{{.Pair.ID}}">{{end}}
   <input type="hidden" name="etag" value="{{.Pair.Etag}}">
