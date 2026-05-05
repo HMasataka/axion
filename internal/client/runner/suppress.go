@@ -15,7 +15,8 @@ type Suppressor struct {
 
 type suppressEntry struct {
 	expiresAt time.Time
-	sha256    string
+	// shas は suppress 対象の SHA256 集合。空集合のとき任意 SHA を suppress する。
+	shas map[string]struct{}
 }
 
 // NewSuppressor は新しい Suppressor を作る（GC は StartGC で別途開始する）。
@@ -27,14 +28,33 @@ func NewSuppressor() *Suppressor {
 	}
 }
 
-// Add は rel を ttl 期間 suppress 対象に登録する。sha256 は空文字でも可。
+// Add は rel を ttl 期間 suppress 対象に登録する。
+// sha256 は空文字でも可（任意 SHA を suppress）。
+// 既存エントリがある場合は SHA を追加し、TTL をより長い方に更新する。
 func (s *Suppressor) Add(rel, sha256 string, ttl time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.m[rel] = suppressEntry{
-		expiresAt: s.clock().Add(ttl),
-		sha256:    sha256,
+	newExpiry := s.clock().Add(ttl)
+	e, exists := s.m[rel]
+	if !exists {
+		shas := make(map[string]struct{})
+		if sha256 != "" {
+			shas[sha256] = struct{}{}
+		}
+		s.m[rel] = suppressEntry{expiresAt: newExpiry, shas: shas}
+		return
 	}
+	// 既存エントリを更新: TTL を延長し SHA を追加する。
+	if newExpiry.After(e.expiresAt) {
+		e.expiresAt = newExpiry
+	}
+	if sha256 != "" {
+		e.shas[sha256] = struct{}{}
+	} else {
+		// 空 SHA は全 SHA を suppress する意味なので集合をクリア。
+		e.shas = make(map[string]struct{})
+	}
+	s.m[rel] = e
 }
 
 // Hit は rel が suppress 対象なら true を返す。期限切れは false。
@@ -53,7 +73,7 @@ func (s *Suppressor) Hit(rel string) bool {
 }
 
 // HitWithSHA は rel + sha256 の組み合わせが suppress 対象なら true を返す。
-// sha256 が記録と異なる場合は実 watcher 由来として false を返す。
+// 登録された SHA 集合に含まれるか、集合が空（任意 SHA を suppress）なら true。
 func (s *Suppressor) HitWithSHA(rel, sha256 string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -65,7 +85,12 @@ func (s *Suppressor) HitWithSHA(rel, sha256 string) bool {
 		delete(s.m, rel)
 		return false
 	}
-	return e.sha256 == "" || e.sha256 == sha256
+	if len(e.shas) == 0 {
+		// 空集合 = 任意 SHA を suppress
+		return true
+	}
+	_, found := e.shas[sha256]
+	return found
 }
 
 // StartGC は ticker 間隔で期限切れエントリを掃除する goroutine を起動する。

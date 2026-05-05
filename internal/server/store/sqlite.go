@@ -23,6 +23,9 @@ func Open(ctx context.Context, dbPath string) (*SQLite, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	// SQLite の WAL モードで読み取り/書き込みの可視性を保証するため単一コネクションに固定する。
+	// これにより upsert 後の GetFileState が必ず最新データを参照できる。
+	db.SetMaxOpenConns(1)
 
 	if err := applyMigrations(ctx, db); err != nil {
 		db.Close()
