@@ -1,0 +1,84 @@
+{{define "content"}}
+<h1>Sync Pairs</h1>
+
+<button type="button" hx-get="/pairs/new" hx-target="#new-pair-form" hx-swap="innerHTML">
+  Create new pair
+</button>
+<div id="new-pair-form"></div>
+
+<table id="pairs-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Client A → Path</th>
+      <th>Client B → Path</th>
+      <th>Direction</th>
+      <th>Enabled</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Pairs}}
+    <tr id="pair-{{.ID}}">
+      {{template "pair_row" .}}
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "pair_row"}}
+<td>{{.Name}}</td>
+<td>{{.ClientAName}} → {{.PathA}}</td>
+<td>{{.ClientBName}} → {{.PathB}}</td>
+<td>{{.Direction}}</td>
+<td>{{if .Enabled}}✓{{else}}—{{end}}</td>
+<td>
+  <button type="button" hx-get="/pairs/{{.ID}}/edit" hx-target="#pair-{{.ID}}" hx-swap="innerHTML">Edit</button>
+  <button type="button" hx-delete="/pairs/{{.ID}}" hx-target="#pair-{{.ID}}" hx-swap="outerHTML"
+          hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}' hx-confirm="Delete pair {{.Name}}?">Delete</button>
+</td>
+{{end}}
+
+{{define "pair_edit_form"}}
+<form hx-post="/pairs/{{.Action}}"
+      {{if .Pair.ID}}hx-target="#pair-{{.Pair.ID}}" hx-swap="innerHTML"{{else}}hx-target="#new-pair-form" hx-swap="innerHTML"{{end}}>
+  <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+  {{if .Pair.ID}}<input type="hidden" name="id" value="{{.Pair.ID}}">{{end}}
+  <input type="hidden" name="etag" value="{{.Pair.Etag}}">
+
+  <label>Name <input type="text" name="name" value="{{.Pair.Name}}" required></label>
+
+  <label>Client A
+    <select name="client_a_id" required>
+      {{range .Clients}}
+      <option value="{{.ID}}" {{if eq .ID $.Pair.ClientAID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Hostname}}{{end}}</option>
+      {{end}}
+    </select>
+  </label>
+  <label>Path A <input type="text" name="path_a" value="{{.Pair.PathA}}" required placeholder="."></label>
+
+  <label>Client B
+    <select name="client_b_id" required>
+      {{range .Clients}}
+      <option value="{{.ID}}" {{if eq .ID $.Pair.ClientBID}}selected{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Hostname}}{{end}}</option>
+      {{end}}
+    </select>
+  </label>
+  <label>Path B <input type="text" name="path_b" value="{{.Pair.PathB}}" required placeholder="."></label>
+
+  <label>Direction
+    <select name="direction" required>
+      <option value="bidirectional" {{if eq .Pair.Direction "bidirectional"}}selected{{end}}>Bidirectional</option>
+      <option value="a_to_b" {{if eq .Pair.Direction "a_to_b"}}selected{{end}}>A → B</option>
+      <option value="b_to_a" {{if eq .Pair.Direction "b_to_a"}}selected{{end}}>B → A</option>
+    </select>
+  </label>
+
+  <label><input type="checkbox" name="enabled" value="1" {{if .Pair.Enabled}}checked{{end}}> Enabled</label>
+
+  <button type="submit">{{if .Pair.ID}}Save{{else}}Create{{end}}</button>
+  <button type="button" hx-get="/pairs/{{if .Pair.ID}}{{.Pair.ID}}/cancel{{else}}new/cancel{{end}}"
+          hx-target="{{if .Pair.ID}}#pair-{{.Pair.ID}}{{else}}#new-pair-form{{end}}" hx-swap="innerHTML">Cancel</button>
+</form>
+{{end}}

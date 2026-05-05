@@ -1,0 +1,48 @@
+{{define "content"}}
+<h1>Clients</h1>
+
+<table id="clients-table">
+  <thead>
+    <tr>
+      <th>Display name</th>
+      <th>Hostname</th>
+      <th>Root path</th>
+      <th>Status</th>
+      <th>Last seen</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Clients}}
+    <tr id="client-{{.ID}}">
+      {{template "client_row" .}}
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "client_row"}}
+<td>{{.DisplayName}}</td>
+<td>{{.Hostname}}</td>
+<td>{{.RootPath}}</td>
+<td>{{.Status}}</td>
+<td>{{.LastSeenString}}</td>
+<td>
+  <button type="button" hx-get="/clients/{{.ID}}/edit" hx-target="#client-{{.ID}}" hx-swap="innerHTML">
+    Edit
+  </button>
+</td>
+{{end}}
+
+{{define "client_edit_row"}}
+<td colspan="6">
+  <form hx-post="/clients/{{.Client.ID}}/display-name" hx-target="#client-{{.Client.ID}}" hx-swap="innerHTML">
+    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+    <input type="hidden" name="etag" value="{{.Client.Etag}}">
+    <input type="text" name="display_name" value="{{.Client.DisplayName}}" required placeholder="Display name">
+    <button type="submit">Save</button>
+    <button type="button" hx-get="/clients/{{.Client.ID}}/cancel" hx-target="#client-{{.Client.ID}}" hx-swap="innerHTML">Cancel</button>
+  </form>
+</td>
+{{end}}

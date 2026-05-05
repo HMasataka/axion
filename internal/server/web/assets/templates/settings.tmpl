@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>Settings</h1>
+
+<p>Edit server settings. Changes take effect on next client connection.</p>
+
+<table id="settings-table">
+  <thead>
+    <tr><th>Key</th><th>Value</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {{range .Settings}}
+    <tr id="setting-{{.Key}}">
+      {{template "setting_row" .}}
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "setting_row"}}
+<td>{{.Key}}</td>
+<td><code>{{.Value}}</code></td>
+<td>
+  <button type="button" hx-get="/settings/{{.Key}}/edit" hx-target="#setting-{{.Key}}" hx-swap="innerHTML">Edit</button>
+</td>
+{{end}}
+
+{{define "setting_edit_row"}}
+<td colspan="3">
+  <form hx-post="/settings/{{.Key}}" hx-target="#setting-{{.Key}}" hx-swap="innerHTML">
+    <label>{{.Key}}
+      <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+      <input type="text" name="value" value="{{.Value}}" required>
+    </label>
+    <button type="submit">Save</button>
+    <button type="button" hx-get="/settings/{{.Key}}/cancel" hx-target="#setting-{{.Key}}" hx-swap="innerHTML">Cancel</button>
+  </form>
+</td>
+{{end}}
