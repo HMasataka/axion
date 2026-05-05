@@ -32,7 +32,7 @@ func noopOnDisc() OnDisconnect {
 
 func TestHub_RegisterAndOnline(t *testing.T) {
 	// Given
-	h := New(noopHandler(), noopOnDisc())
+	h := New(noopHandler(), nil, noopOnDisc())
 	c := newFakeConn("client-1", h)
 
 	// When
@@ -50,7 +50,7 @@ func TestHub_RegisterAndOnline(t *testing.T) {
 
 func TestHub_UnregisterRemovesClient(t *testing.T) {
 	// Given
-	h := New(noopHandler(), noopOnDisc())
+	h := New(noopHandler(), nil, noopOnDisc())
 	c := newFakeConn("client-1", h)
 	h.Register(c)
 
@@ -68,7 +68,7 @@ func TestHub_UnregisterRemovesClient(t *testing.T) {
 
 func TestHub_RegisterDuplicateReplaces(t *testing.T) {
 	// Given
-	h := New(noopHandler(), noopOnDisc())
+	h := New(noopHandler(), nil, noopOnDisc())
 	old := newFakeConn("client-1", h)
 	h.Register(old)
 
@@ -95,7 +95,7 @@ func TestHub_RegisterDuplicateReplaces(t *testing.T) {
 
 func TestHub_Send_Offline(t *testing.T) {
 	// Given
-	h := New(noopHandler(), noopOnDisc())
+	h := New(noopHandler(), nil, noopOnDisc())
 
 	// When: 未登録 clientID への送信
 	err := h.Send(context.Background(), "ghost", proto.Envelope{Type: proto.TypePing})
@@ -108,7 +108,7 @@ func TestHub_Send_Offline(t *testing.T) {
 
 func TestHub_SendAndWait_Timeout(t *testing.T) {
 	// Given
-	h := New(noopHandler(), noopOnDisc())
+	h := New(noopHandler(), nil, noopOnDisc())
 
 	// 送信をキャプチャする writeOnly Conn を conns に直接挿入
 	captured := make(chan proto.Envelope, 1)
@@ -138,7 +138,7 @@ func TestHub_SendAndWait_Timeout(t *testing.T) {
 
 func TestHub_SendAndWait_Success(t *testing.T) {
 	// Given
-	h := New(noopHandler(), noopOnDisc())
+	h := New(noopHandler(), nil, noopOnDisc())
 	corrID := "corr-success"
 
 	h.mu.Lock()

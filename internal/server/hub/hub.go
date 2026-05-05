@@ -21,35 +21,46 @@ func (f HandlerFunc) HandleEnvelope(ctx context.Context, clientID string, env pr
 	return f(ctx, clientID, env)
 }
 
+// OnConnect はクライアントが接続登録したときのコールバック。
+type OnConnect func(ctx context.Context, clientID string)
+
 // OnDisconnect はクライアントが offline 遷移したときのコールバック。
 type OnDisconnect func(ctx context.Context, clientID string)
 
 // Hub は全 WS 接続を集中管理する。
 type Hub struct {
-	mu      sync.RWMutex
-	conns   map[string]*Conn
-	handler Handler
-	onDisc  OnDisconnect
-	pending *PendingRegistry
+	mu        sync.RWMutex
+	conns     map[string]*Conn
+	handler   Handler
+	onConnect OnConnect
+	onDisc    OnDisconnect
+	pending   *PendingRegistry
 }
 
-func New(handler Handler, onDisc OnDisconnect) *Hub {
+func New(handler Handler, onConnect OnConnect, onDisc OnDisconnect) *Hub {
 	return &Hub{
-		conns:   make(map[string]*Conn),
-		handler: handler,
-		onDisc:  onDisc,
-		pending: NewPendingRegistry(),
+		conns:     make(map[string]*Conn),
+		handler:   handler,
+		onConnect: onConnect,
+		onDisc:    onDisc,
+		pending:   NewPendingRegistry(),
 	}
 }
 
 // Register は新規 WS 接続を登録する。同 ClientID の既存接続があれば閉じて差し替える。
+// 登録後に onConnect コールバックを goroutine で呼ぶ（nil の場合はスキップ）。
 func (h *Hub) Register(c *Conn) {
 	h.mu.Lock()
 	if old, ok := h.conns[c.clientID]; ok {
 		old.Close()
 	}
 	h.conns[c.clientID] = c
+	onConnect := h.onConnect
 	h.mu.Unlock()
+
+	if onConnect != nil {
+		go onConnect(context.Background(), c.clientID)
+	}
 }
 
 // Unregister は接続を解除する。
