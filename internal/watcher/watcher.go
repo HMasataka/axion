@@ -140,9 +140,16 @@ func (w *Watcher) shouldIgnore(path string) bool {
 	if err != nil {
 		return false
 	}
+	return MatchIgnore(relPath, w.cfg.IgnoreList)
+}
 
+// MatchIgnore は relPath が patterns のいずれかに該当すれば true を返す。
+// relPath は root からの相対パス。マッチ規則は:
+//   - filepath.Match(pattern, basename(relPath))
+//   - strings.HasPrefix(relPath, pattern)
+func MatchIgnore(relPath string, patterns []string) bool {
 	base := filepath.Base(relPath)
-	for _, pattern := range w.cfg.IgnoreList {
+	for _, pattern := range patterns {
 		if matched, _ := filepath.Match(pattern, base); matched {
 			return true
 		}
@@ -150,7 +157,6 @@ func (w *Watcher) shouldIgnore(path string) bool {
 			return true
 		}
 	}
-
 	return false
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/HMasataka/axion/internal/clientfs"
 	"github.com/HMasataka/axion/internal/proto"
+	"github.com/HMasataka/axion/internal/watcher"
 )
 
 const (
@@ -73,6 +74,10 @@ func (r *Runner) walkScan(ctx context.Context, rootSubpath, subRel string, depth
 			entrySubRel = e.Name()
 		}
 		entryJailRel := filepath.Join(rootSubpath, entrySubRel)
+
+		if watcher.MatchIgnore(entryJailRel, r.cfg.IgnoreList) {
+			continue
+		}
 
 		info, err := e.Info()
 		if err != nil {

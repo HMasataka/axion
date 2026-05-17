@@ -18,6 +18,25 @@ import (
 
 const ClientVersion = "0.2.3"
 
+// DefaultIgnoreList はサーバ設定 ignore_list に常に追加される基本パターン。
+// 一般的に .gitignore で除外される依存物 / ビルド成果物 / OS メタデータを含む。
+// 巨大な node_modules 等を snapshot に含めると ListFilesResponse が WS の
+// メッセージサイズ上限を超え、再接続ループに陥るため、デフォルトで除外する。
+var DefaultIgnoreList = []string{
+	".git", ".hg", ".svn",
+	".DS_Store", "Thumbs.db",
+	"node_modules",
+	".direnv",
+	"__pycache__", ".venv", "venv",
+	"target",
+	"dist", "build", "out",
+	".next", ".nuxt", ".svelte-kit", ".cache",
+	".idea", ".vscode",
+	"result", "result-*",
+	".gradle", ".terraform",
+	"*.pyc", "*.tmp", "*.swp", "*~", "*.bak",
+}
+
 type Config struct {
 	ServerURL string
 	Root      string
@@ -88,7 +107,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	return c.Run(ctx,
 		func(settings map[string]string) {
-			ignoreList := parseIgnoreList(settings["ignore_list"])
+			ignoreList := mergeIgnoreList(DefaultIgnoreList, parseIgnoreList(settings["ignore_list"]))
 
 			var newErr error
 			r, newErr = runner.New(runner.Config{
@@ -142,4 +161,23 @@ func parseIgnoreList(raw string) []string {
 		return nil
 	}
 	return list
+}
+
+// mergeIgnoreList は複数の ignore パターン群を順序保ったまま dedupe してマージする。
+func mergeIgnoreList(lists ...[]string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, list := range lists {
+		for _, p := range list {
+			if p == "" {
+				continue
+			}
+			if _, ok := seen[p]; ok {
+				continue
+			}
+			seen[p] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	return out
 }
